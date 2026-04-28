@@ -2,6 +2,7 @@
 
 namespace App\Livewire\Admin;
 
+use App\Models\Answer;
 use App\Models\Departement;
 use App\Services\DepartmentAnalyticsService;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
@@ -45,6 +46,17 @@ class DepartmentAnalytics extends Component
     public array $roleUsersErrorByRole = [];
 
     public ?string $roleErrorMessage = null;
+
+    public bool $showUserDetailModal = false;
+
+    public ?int $selectedUserId = null;
+
+    public string $selectedUserName = '';
+
+    /** @var array<int, array{questionnaire_title:string, questionnaire_id:int, answers:array<int, array{question_text:string, answer_text:string, score:?float, question_order:int}>}> */
+    public array $userDetailAnswers = [];
+
+    public ?string $userDetailErrorMessage = null;
 
     public function mount(): void
     {
@@ -169,6 +181,98 @@ class DepartmentAnalytics extends Component
             $this->roleUsersErrorByRole[$roleId] = 'Gagal memuat daftar user untuk role ini.';
             $this->roleUsersByRole[$roleId] = [];
         }
+    }
+
+    public function showUserDetail(int $userId, string $userName): void
+    {
+        $this->selectedUserId = $userId;
+        $this->selectedUserName = $userName;
+        $this->showUserDetailModal = true;
+        $this->userDetailAnswers = [];
+        $this->userDetailErrorMessage = null;
+
+        try {
+            $query = Answer::with(['question', 'answerOption', 'response.questionnaire'])
+                ->whereHas('response', function ($query) use ($userId) {
+                    $query->where('user_id', $userId);
+                });
+
+            if ($this->selectedDepartmentId !== null) {
+                $query->where('department_id', $this->selectedDepartmentId);
+            }
+
+            if ($this->dateFrom !== null && $this->dateFrom !== '') {
+                $query->whereHas('response', function ($query) {
+                    $query->whereDate('submitted_at', '>=', $this->dateFrom);
+                });
+            }
+
+            if ($this->dateTo !== null && $this->dateTo !== '') {
+                $query->whereHas('response', function ($query) {
+                    $query->whereDate('submitted_at', '<=', $this->dateTo);
+                });
+            }
+
+            $answers = $query->get();
+
+            $grouped = $answers
+                ->groupBy(function (Answer $answer): int {
+                    return (int) ($answer->response?->questionnaire_id ?? 0);
+                })
+                ->map(function ($answers, int $questionnaireId): array {
+                    $first = $answers->first();
+
+                    $sortedAnswers = $answers
+                        ->sortBy(function (Answer $answer): int {
+                            return (int) ($answer->question?->order ?? 0);
+                        })
+                        ->values()
+                        ->map(function (Answer $answer): array {
+                            $answerText = '';
+                            if ($answer->essay_answer !== null && $answer->essay_answer !== '') {
+                                $answerText = $answer->essay_answer;
+                            } elseif ($answer->answerOption !== null) {
+                                $answerText = $answer->answerOption->option_text;
+                            }
+
+                            return [
+                                'question_text' => $answer->question?->question_text ?? '-',
+                                'answer_text' => $answerText ?: '-',
+                                'score' => $answer->calculated_score,
+                                'question_order' => (int) ($answer->question?->order ?? 0),
+                            ];
+                        })
+                        ->all();
+
+                    return [
+                        'questionnaire_title' => $first?->response?->questionnaire?->title ?? '-',
+                        'questionnaire_id' => $questionnaireId,
+                        'answers' => $sortedAnswers,
+                    ];
+                })
+                ->sortBy('questionnaire_id')
+                ->values()
+                ->all();
+
+            $this->userDetailAnswers = $grouped;
+
+            if ($this->userDetailAnswers === []) {
+                $this->userDetailErrorMessage = 'User ini belum memiliki jawaban untuk periode dan filter yang dipilih.';
+            }
+        } catch (\Throwable $exception) {
+            report($exception);
+            $this->userDetailErrorMessage = 'Gagal memuat detail jawaban user.';
+            $this->userDetailAnswers = [];
+        }
+    }
+
+    public function closeUserDetailModal(): void
+    {
+        $this->showUserDetailModal = false;
+        $this->selectedUserId = null;
+        $this->selectedUserName = '';
+        $this->userDetailAnswers = [];
+        $this->userDetailErrorMessage = null;
     }
 
     private function refreshSelectedDepartmentRoles(): void
