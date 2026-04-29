@@ -30,6 +30,8 @@ class UserDirectory extends Component
 
     public string $phoneFilter = '';
 
+    public string $questionnaireFilter = '';
+
     public int $perPage = 10;
 
     public bool $showForm = false;
@@ -92,6 +94,11 @@ class UserDirectory extends Component
     }
 
     public function updatingPhoneFilter(): void
+    {
+        $this->resetPage();
+    }
+
+    public function updatingQuestionnaireFilter(): void
     {
         $this->resetPage();
     }
@@ -424,6 +431,16 @@ class UserDirectory extends Component
                     $query->where('is_active', true);
                 } elseif ($this->statusFilter === 'inactive') {
                     $query->where('is_active', false);
+                }
+            })
+            ->when($this->questionnaireFilter !== '', function ($query): void {
+                if ($this->questionnaireFilter === 'completed') {
+                    $query->whereHas('responses', fn($q) => $q->where('status', 'submitted')->whereNull('deleted_at'));
+                } elseif ($this->questionnaireFilter === 'in_progress') {
+                    $query->whereHas('responses', fn($q) => $q->where('status', 'draft')->whereNull('deleted_at'))
+                        ->whereDoesntHave('responses', fn($q) => $q->where('status', 'submitted')->whereNull('deleted_at'));
+                } elseif ($this->questionnaireFilter === 'not_started') {
+                    $query->whereDoesntHave('responses', fn($q) => $q->whereNull('deleted_at'));
                 }
             })
             ->when($this->sortBy === 'department', function ($query): void {

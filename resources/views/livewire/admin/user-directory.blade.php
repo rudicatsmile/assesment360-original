@@ -204,7 +204,7 @@
         </div>
     @endif
 
-    <div class="grid gap-3 rounded-xl border border-zinc-200 bg-white p-3 shadow-sm md:grid-cols-6">
+    <div class="grid gap-3 rounded-xl border border-zinc-200 bg-white p-3 shadow-sm md:grid-cols-3 lg:grid-cols-7">
         <input type="text" wire:model.live.debounce.300ms="search" placeholder="Cari nama/email..."
             class="rounded-lg border border-zinc-300 px-3 py-2 text-sm">
         <select wire:model.live="roleFilter" class="rounded-lg border border-zinc-300 px-3 py-2 text-sm">
@@ -226,6 +226,12 @@
         </select>
         <input type="text" wire:model.live.debounce.300ms="phoneFilter" placeholder="Filter no. telepon..."
             class="rounded-lg border border-zinc-300 px-3 py-2 text-sm">
+        <select wire:model.live="questionnaireFilter" class="rounded-lg border border-zinc-300 px-3 py-2 text-sm">
+            <option value="">Semua kuisioner</option>
+            <option value="completed">Sudah menyelesaikan</option>
+            <option value="in_progress">Belum / Sedang menyelesaikan</option>
+            <option value="not_started">Belum menyelesaikan</option>
+        </select>
         <select wire:model.live="perPage" class="rounded-lg border border-zinc-300 px-3 py-2 text-sm">
             <option value="10">10 / halaman</option>
             <option value="20">20 / halaman</option>
