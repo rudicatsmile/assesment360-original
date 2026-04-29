@@ -160,6 +160,7 @@ class DepartmentAnalyticsService
                 ->joinSub($totalByRoleSub, 'tot', fn($join) => $join->on('tot.role_id', '=', 'roles.id'))
                 ->leftJoinSub($activeRespondentsSub, 'resp', fn($join) => $join->on('resp.role_id', '=', 'roles.id'))
                 ->leftJoinSub($averageScoreSub, 'score', fn($join) => $join->on('score.role_id', '=', 'roles.id'))
+                ->where('roles.show_in_analytics', true)
                 ->orderBy('roles.name')
                 ->selectRaw('
                     roles.id as role_id,
@@ -231,9 +232,18 @@ class DepartmentAnalyticsService
                 ->when($dateTo, fn($query) => $query->whereDate('responses.submitted_at', '<=', $dateTo))
                 ->groupBy('responses.user_id');
 
+            $hasDraftSub = DB::table('responses')
+                ->selectRaw('user_id, 1 as has_draft')
+                ->where('status', 'draft')
+                ->whereNull('deleted_at')
+                ->when($dateFrom, fn($query) => $query->whereDate('started_at', '>=', $dateFrom))
+                ->when($dateTo, fn($query) => $query->whereDate('started_at', '<=', $dateTo))
+                ->groupBy('user_id');
+
             return DB::table('users')
                 ->leftJoinSub($submissionSub, 'sub', fn($join) => $join->on('sub.user_id', '=', 'users.id'))
                 ->leftJoinSub($scoreSub, 'sc', fn($join) => $join->on('sc.user_id', '=', 'users.id'))
+                ->leftJoinSub($hasDraftSub, 'hd', fn($join) => $join->on('hd.user_id', '=', 'users.id'))
                 ->where('users.department_id', $departmentId)
                 ->where('users.role_id', $roleId)
                 ->whereNull('users.deleted_at')
@@ -242,7 +252,12 @@ class DepartmentAnalyticsService
                     users.id as user_id,
                     users.name as user_name,
                     COALESCE(sub.total_submissions, 0) as total_submissions,
-                    ROUND(COALESCE(sc.average_score, 0), 2) as average_score
+                    ROUND(COALESCE(sc.average_score, 0), 2) as average_score,
+                    CASE
+                        WHEN COALESCE(sub.total_submissions, 0) > 0 THEN \'completed\'
+                        WHEN hd.has_draft IS NOT NULL THEN \'in_progress\'
+                        ELSE \'not_started\'
+                    END as submission_status
                 ')
                 ->get()
                 ->map(fn(object $row): array => [
@@ -250,6 +265,7 @@ class DepartmentAnalyticsService
                     'user_name' => (string) $row->user_name,
                     'total_submissions' => (int) $row->total_submissions,
                     'average_score' => (float) $row->average_score,
+                    'submission_status' => (string) $row->submission_status,
                 ])
                 ->values()
                 ->all();

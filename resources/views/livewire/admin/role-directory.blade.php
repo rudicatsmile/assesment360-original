@@ -103,6 +103,19 @@
                                 <option value="0">Nonaktif</option>
                             </select>
                         </div>
+
+                        <div class="space-y-1.5 md:col-span-2">
+                            <label class="flex items-center gap-3 cursor-pointer select-none">
+                                <input type="checkbox" wire:model.live="showInAnalytics"
+                                    class="h-5 w-5 rounded border-zinc-300 text-blue-600 focus:ring-blue-500">
+                                <div>
+                                    <span class="text-sm font-medium text-zinc-700">Tampilkan di Analitik</span>
+                                    <p class="text-xs text-zinc-500">Jika diaktifkan, role ini akan muncul di section Role
+                                        Analytics pada halaman Department Analytics.</p>
+                                </div>
+                            </label>
+                            @error('showInAnalytics') <span class="text-xs text-rose-600">{{ $message }}</span> @enderror
+                        </div>
                     </div>
                 </div>
 
@@ -138,6 +151,7 @@
                                 wire:click="sortByColumn('prosentase')">Prosentase</button></th>
                         <th class="px-4 py-3"><button type="button"
                                 wire:click="sortByColumn('is_active')">Status</button></th>
+                        <th class="px-4 py-3 text-center">Analitik</th>
                         <th class="px-4 py-3">Users</th>
                         <th class="px-4 py-3 text-right">Aksi</th>
                     </tr>
@@ -150,6 +164,15 @@
                             <td class="px-4 py-3 text-zinc-700">{{ $role->slug }}</td>
                             <td class="px-4 py-3 text-zinc-700">{{ number_format((float) $role->prosentase, 2) }}%</td>
                             <td class="px-4 py-3 text-zinc-700">{{ $role->is_active ? 'Aktif' : 'Nonaktif' }}</td>
+                            <td class="px-4 py-3 text-center">
+                                @if($role->show_in_analytics)
+                                    <span
+                                        class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Ya</span>
+                                @else
+                                    <span
+                                        class="inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-500">Tidak</span>
+                                @endif
+                            </td>
                             <td class="px-4 py-3 text-zinc-700">{{ $role->users_count }}</td>
                             <td class="px-4 py-3">
                                 <div class="flex justify-end gap-2">
@@ -164,7 +187,7 @@
                         </tr>
                     @empty
                         <tr>
-                            <td colspan="7" class="px-4 py-6 text-center text-zinc-500">Belum ada data role.</td>
+                            <td colspan="8" class="px-4 py-6 text-center text-zinc-500">Belum ada data role.</td>
                         </tr>
                     @endforelse
                 </tbody>
@@ -212,7 +235,8 @@
                 </div>
                 <div class="flex gap-3 border-t border-zinc-100 bg-zinc-50 px-6 py-4 rounded-b-xl">
                     <flux:button variant="ghost" class="flex-1" wire:click="cancelDelete">
-                        {{ $activeUsersCount > 0 ? 'Tutup' : 'Batal' }}</flux:button>
+                        {{ $activeUsersCount > 0 ? 'Tutup' : 'Batal' }}
+                    </flux:button>
                     @if($activeUsersCount === 0)
                         <flux:button variant="danger" class="flex-1" wire:click="executeDelete">Ya, Hapus</flux:button>
                     @endif

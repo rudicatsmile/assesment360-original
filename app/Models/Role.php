@@ -16,10 +16,12 @@ class Role extends Model
         'description',
         'prosentase',
         'is_active',
+        'show_in_analytics',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
+        'show_in_analytics' => 'boolean',
         'prosentase' => 'decimal:2',
     ];
 

@@ -25,6 +25,8 @@ class RoleDirectory extends Component
     public string $prosentase = '0';
     public bool $is_active = true;
 
+    public bool $showInAnalytics = true;
+
     public bool $showDeleteModal = false;
 
     public ?int $deletingId = null;
@@ -57,6 +59,7 @@ class RoleDirectory extends Component
         $this->description = (string) ($role->description ?? '');
         $this->prosentase = (string) $role->prosentase;
         $this->is_active = (bool) $role->is_active;
+        $this->showInAnalytics = (bool) ($role->show_in_analytics ?? true);
         $this->showForm = true;
         $this->resetErrorBag();
     }
@@ -81,6 +84,7 @@ class RoleDirectory extends Component
             'description' => ['nullable', 'string', 'max:2000'],
             'prosentase' => ['required', 'numeric', 'min:0', 'max:100'],
             'is_active' => ['required', 'boolean'],
+            'showInAnalytics' => ['required', 'boolean'],
         ]);
 
         $payload = [
@@ -89,6 +93,7 @@ class RoleDirectory extends Component
             'description' => $validated['description'] !== '' ? $validated['description'] : null,
             'prosentase' => (float) $validated['prosentase'],
             'is_active' => (bool) $validated['is_active'],
+            'show_in_analytics' => (bool) $validated['showInAnalytics'],
         ];
 
         if ($this->editingId) {
@@ -184,6 +189,7 @@ class RoleDirectory extends Component
         $this->description = '';
         $this->prosentase = '0';
         $this->is_active = true;
+        $this->showInAnalytics = true;
         $this->resetErrorBag();
     }
 
