@@ -32,6 +32,8 @@ class DepartmentDirectory extends Component
 
     public string $description = '';
 
+    public bool $showInAnalytics = true;
+
     public bool $showDeleteModal = false;
 
     public ?int $deletingId = null;
@@ -63,6 +65,7 @@ class DepartmentDirectory extends Component
         $this->name = $item->name;
         $this->urut = (int) $item->urut;
         $this->description = (string) ($item->description ?? '');
+        $this->showInAnalytics = (bool) ($item->show_in_analytics ?? true);
         $this->showForm = true;
         $this->resetErrorBag();
     }
@@ -81,21 +84,31 @@ class DepartmentDirectory extends Component
             'name' => ['required', 'string', 'min:2', 'max:100', Rule::unique('departements', 'name')->ignore($this->editingId)],
             'urut' => ['required', 'integer', 'min:0', 'max:99999'],
             'description' => ['nullable', 'string', 'max:2000'],
+            'showInAnalytics' => ['required', 'boolean'],
         ]);
-
         if ($this->editingId) {
             $item = Departement::query()->findOrFail($this->editingId);
-            $before = $item->only(['name', 'urut', 'description']);
-            $item->update($validated);
+            $before = $item->only(['name', 'urut', 'description', 'show_in_analytics']);
+            $item->update([
+                'name' => $validated['name'],
+                'urut' => $validated['urut'],
+                'description' => $validated['description'],
+                'show_in_analytics' => $validated['showInAnalytics'],
+            ]);
             Log::info('admin.departements.update.livewire', [
                 'actor_id' => auth()->id(),
                 'departement_id' => $item->id,
                 'before' => $before,
-                'after' => $item->only(['name', 'urut', 'description']),
+                'after' => $item->only(['name', 'urut', 'description', 'show_in_analytics']),
             ]);
             session()->flash('success', 'Department berhasil diperbarui.');
         } else {
-            $item = Departement::query()->create($validated);
+            $item = Departement::query()->create([
+                'name' => $validated['name'],
+                'urut' => $validated['urut'],
+                'description' => $validated['description'],
+                'show_in_analytics' => $validated['showInAnalytics'],
+            ]);
             Log::info('admin.departements.create.livewire', [
                 'actor_id' => auth()->id(),
                 'departement_id' => $item->id,
@@ -195,6 +208,7 @@ class DepartmentDirectory extends Component
         $this->name = '';
         $this->urut = 0;
         $this->description = '';
+        $this->showInAnalytics = true;
         $this->resetErrorBag();
     }
 

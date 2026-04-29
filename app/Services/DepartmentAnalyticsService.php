@@ -56,6 +56,7 @@ class DepartmentAnalyticsService
             ->leftJoinSub($employeesSub, 'emp', fn($join) => $join->on('emp.department_id', '=', 'departements.id'))
             ->leftJoinSub($respondentsSub, 'resp', fn($join) => $join->on('resp.department_id', '=', 'departements.id'))
             ->leftJoinSub($scoresSub, 'sc', fn($join) => $join->on('sc.department_id', '=', 'departements.id'))
+            ->where('departements.show_in_analytics', true)
             ->when($departmentId, fn($q) => $q->where('departements.id', $departmentId))
             ->selectRaw('
                 departements.id,

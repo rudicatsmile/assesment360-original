@@ -14,6 +14,11 @@ class Departement extends Model
         'name',
         'urut',
         'description',
+        'show_in_analytics',
+    ];
+
+    protected $casts = [
+        'show_in_analytics' => 'boolean',
     ];
 
     public function users(): HasMany

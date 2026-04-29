@@ -350,6 +350,7 @@ class DepartmentAnalytics extends Component
     public function render()
     {
         $departments = Departement::query()
+            ->where('show_in_analytics', true)
             ->orderBy('urut')
             ->orderBy('name')
             ->get(['id', 'name']);
