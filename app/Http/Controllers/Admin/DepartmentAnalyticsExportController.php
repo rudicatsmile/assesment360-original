@@ -16,7 +16,7 @@ class DepartmentAnalyticsExportController extends Controller
     {
         $this->authorizeAdmin($request);
 
-        $filename = 'department_analytics_'.now()->format('Ymd_His').'.xlsx';
+        $filename = 'department_analytics_' . now()->format('Ymd_His') . '.xlsx';
 
         return Excel::download(
             new DepartmentAnalyticsExport(
@@ -33,18 +33,14 @@ class DepartmentAnalyticsExportController extends Controller
     {
         $this->authorizeAdmin($request);
 
-        $result = app(DepartmentAnalyticsService::class)->summarize(
+        $fullData = app(DepartmentAnalyticsService::class)->summarizeFull(
             $request->query('date_from'),
             $request->query('date_to'),
-            $request->query('department_id') ? (int) $request->query('department_id') : null,
-            'name',
-            'asc',
-            10000,
-            1
+            $request->query('department_id') ? (int) $request->query('department_id') : null
         );
 
         $html = view('admin.exports.department-analytics-pdf', [
-            'rows' => $result['rows']->items(),
+            'fullData' => $fullData,
             'dateFrom' => $request->query('date_from'),
             'dateTo' => $request->query('date_to'),
         ])->render();

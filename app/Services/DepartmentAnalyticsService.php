@@ -215,8 +215,8 @@ class DepartmentAnalyticsService
                 ->selectRaw('user_id, COUNT(*) as total_submissions')
                 ->where('status', 'submitted')
                 ->whereNull('deleted_at')
-                ->when($dateFrom, fn ($query) => $query->whereDate('submitted_at', '>=', $dateFrom))
-                ->when($dateTo, fn ($query) => $query->whereDate('submitted_at', '<=', $dateTo))
+                ->when($dateFrom, fn($query) => $query->whereDate('submitted_at', '>=', $dateFrom))
+                ->when($dateTo, fn($query) => $query->whereDate('submitted_at', '<=', $dateTo))
                 ->groupBy('user_id');
 
             $scoreSub = DB::table('answers')
@@ -226,13 +226,13 @@ class DepartmentAnalyticsService
                 ->whereNull('responses.deleted_at')
                 ->whereNull('answers.deleted_at')
                 ->whereNotNull('answers.calculated_score')
-                ->when($dateFrom, fn ($query) => $query->whereDate('responses.submitted_at', '>=', $dateFrom))
-                ->when($dateTo, fn ($query) => $query->whereDate('responses.submitted_at', '<=', $dateTo))
+                ->when($dateFrom, fn($query) => $query->whereDate('responses.submitted_at', '>=', $dateFrom))
+                ->when($dateTo, fn($query) => $query->whereDate('responses.submitted_at', '<=', $dateTo))
                 ->groupBy('responses.user_id');
 
             return DB::table('users')
-                ->leftJoinSub($submissionSub, 'sub', fn ($join) => $join->on('sub.user_id', '=', 'users.id'))
-                ->leftJoinSub($scoreSub, 'sc', fn ($join) => $join->on('sc.user_id', '=', 'users.id'))
+                ->leftJoinSub($submissionSub, 'sub', fn($join) => $join->on('sub.user_id', '=', 'users.id'))
+                ->leftJoinSub($scoreSub, 'sc', fn($join) => $join->on('sc.user_id', '=', 'users.id'))
                 ->where('users.department_id', $departmentId)
                 ->where('users.role_id', $roleId)
                 ->whereNull('users.deleted_at')
@@ -244,7 +244,7 @@ class DepartmentAnalyticsService
                     ROUND(COALESCE(sc.average_score, 0), 2) as average_score
                 ')
                 ->get()
-                ->map(fn (object $row): array => [
+                ->map(fn(object $row): array => [
                     'user_id' => (int) $row->user_id,
                     'user_name' => (string) $row->user_name,
                     'total_submissions' => (int) $row->total_submissions,
@@ -253,6 +253,57 @@ class DepartmentAnalyticsService
                 ->values()
                 ->all();
         });
+    }
+
+    /**
+     * @return array<int, array{
+     *   department_name: string,
+     *   total_respondents: int,
+     *   participation_rate: float,
+     *   average_score: float,
+     *   roles: array<int, array{
+     *     role_name: string,
+     *     total_respondents: int,
+     *     participation_rate: float,
+     *     average_score: float,
+     *     users: array<int, array{user_id:int, user_name:string, total_submissions:int, average_score:float}>
+     *   }>
+     * }>
+     */
+    public function summarizeFull(
+        ?string $dateFrom,
+        ?string $dateTo,
+        ?int $departmentId
+    ): array {
+        $departmentsResult = $this->summarize($dateFrom, $dateTo, $departmentId, 'urut', 'asc', 10000, 1);
+        $departments = $departmentsResult['rows']->items();
+
+        $fullData = [];
+        foreach ($departments as $dept) {
+            $roles = $this->summarizeRolesByDepartment((int) $dept->id, $dateFrom, $dateTo)['rows'];
+
+            $rolesWithUsers = [];
+            foreach ($roles as $role) {
+                $users = $this->summarizeUsersByDepartmentRole((int) $dept->id, $role['role_id'], $dateFrom, $dateTo);
+                $rolesWithUsers[] = [
+                    'role_name' => $role['role_name'],
+                    'total_respondents' => $role['total_respondents'],
+                    'participation_rate' => $role['participation_rate'],
+                    'average_score' => $role['average_score'],
+                    'users' => $users,
+                ];
+            }
+
+            $fullData[] = [
+                'department_name' => (string) $dept->name,
+                'total_respondents' => (int) $dept->total_respondents,
+                'participation_rate' => (float) $dept->participation_rate,
+                'average_score' => (float) $dept->average_score,
+                'roles' => $rolesWithUsers,
+            ];
+        }
+
+        return $fullData;
     }
 
     /**

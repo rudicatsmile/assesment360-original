@@ -20,31 +20,65 @@ class DepartmentAnalyticsExport implements FromArray, WithHeadings
     {
         return [
             'Nama Departemen',
-            'Total Responden',
-            'Tingkat Partisipasi (%)',
-            'Rata-rata Skor',
+            'Total Responden (Dept)',
+            'Partisipasi (Dept) %',
+            'Rata-rata Skor (Dept)',
+            'Role',
+            'Total Responden (Role)',
+            'Partisipasi (Role) %',
+            'Rata-rata Skor (Role)',
+            'Nama User',
+            'Submit',
+            'Avg Score (User)',
         ];
     }
 
     public function array(): array
     {
-        $result = $this->service->summarize(
+        $fullData = $this->service->summarizeFull(
             $this->dateFrom,
             $this->dateTo,
-            $this->departmentId,
-            'name',
-            'asc',
-            10000,
-            1
+            $this->departmentId
         );
 
-        return collect($result['rows']->items())
-            ->map(fn ($row): array => [
-                (string) $row->name,
-                (int) $row->total_respondents,
-                (float) $row->participation_rate,
-                (float) $row->average_score,
-            ])
-            ->all();
+        $rows = [];
+        foreach ($fullData as $dept) {
+            foreach ($dept['roles'] as $role) {
+                if ($role['users'] === []) {
+                    $rows[] = [
+                        $dept['department_name'],
+                        $dept['total_respondents'],
+                        $dept['participation_rate'],
+                        $dept['average_score'],
+                        $role['role_name'],
+                        $role['total_respondents'],
+                        $role['participation_rate'],
+                        $role['average_score'],
+                        '-',
+                        '-',
+                        '-',
+                    ];
+                    continue;
+                }
+
+                foreach ($role['users'] as $user) {
+                    $rows[] = [
+                        $dept['department_name'],
+                        $dept['total_respondents'],
+                        $dept['participation_rate'],
+                        $dept['average_score'],
+                        $role['role_name'],
+                        $role['total_respondents'],
+                        $role['participation_rate'],
+                        $role['average_score'],
+                        $user['user_name'],
+                        $user['total_submissions'],
+                        $user['average_score'],
+                    ];
+                }
+            }
+        }
+
+        return $rows;
     }
 }
