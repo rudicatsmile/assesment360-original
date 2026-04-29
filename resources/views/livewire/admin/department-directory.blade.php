@@ -134,8 +134,8 @@
                                 <div class="flex justify-end gap-2">
                                     <flux:button size="xs" variant="outline" wire:click="startEdit({{ $department->id }})">
                                         Edit</flux:button>
-                                    <flux:button size="xs" variant="danger" wire:click="delete({{ $department->id }})"
-                                        wire:confirm="Hapus department ini?">
+                                    <flux:button size="xs" variant="danger"
+                                        wire:click="confirmDelete({{ $department->id }}, '{{ addslashes($department->name) }}')">
                                         Hapus
                                     </flux:button>
                                 </div>
@@ -152,4 +152,51 @@
     </div>
 
     {{ $departements->links() }}
+
+    @if ($showDeleteModal)
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" wire:click.self="cancelDelete">
+            <div class="w-full max-w-md rounded-xl bg-white shadow-xl">
+                <div class="px-6 py-5 text-center">
+                    @if($activeUsersCount > 0)
+                        <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-amber-100">
+                            <svg class="h-7 w-7 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                            </svg>
+                        </div>
+                        <h3 class="text-lg font-semibold text-zinc-900">Tidak Dapat Menghapus</h3>
+                        <div class="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+                            <p class="text-sm font-medium text-amber-800">
+                                Department "{{ $deletingName }}" masih digunakan oleh
+                                <span class="text-base font-bold text-amber-900">{{ $activeUsersCount }}</span> user aktif.
+                            </p>
+                            <p class="mt-1 text-xs text-amber-600">
+                                Nonaktifkan atau pindahkan user terlebih dahulu sebelum menghapus department ini.
+                            </p>
+                        </div>
+                    @else
+                        <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-red-100">
+                            <svg class="h-7 w-7 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                            </svg>
+                        </div>
+                        <h3 class="text-lg font-semibold text-zinc-900">Hapus Department</h3>
+                        <p class="mt-2 text-sm text-zinc-500">
+                            Apakah Anda yakin ingin menghapus department
+                            <span class="font-semibold text-zinc-700">"{{ $deletingName }}"</span>?
+                            Tindakan ini tidak dapat dibatalkan.
+                        </p>
+                    @endif
+                </div>
+                <div class="flex gap-3 border-t border-zinc-100 bg-zinc-50 px-6 py-4 rounded-b-xl">
+                    <flux:button variant="ghost" class="flex-1" wire:click="cancelDelete">
+                        {{ $activeUsersCount > 0 ? 'Tutup' : 'Batal' }}</flux:button>
+                    @if($activeUsersCount === 0)
+                        <flux:button variant="danger" class="flex-1" wire:click="executeDelete">Ya, Hapus</flux:button>
+                    @endif
+                </div>
+            </div>
+        </div>
+    @endif
 </div>

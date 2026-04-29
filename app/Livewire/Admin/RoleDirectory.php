@@ -25,6 +25,14 @@ class RoleDirectory extends Component
     public string $prosentase = '0';
     public bool $is_active = true;
 
+    public bool $showDeleteModal = false;
+
+    public ?int $deletingId = null;
+
+    public string $deletingName = '';
+
+    public int $activeUsersCount = 0;
+
     public function mount(): void
     {
         abort_unless(auth()->user()?->canManageRoles(), 403);
@@ -93,6 +101,51 @@ class RoleDirectory extends Component
 
         $this->resetForm();
         $this->resetPage();
+    }
+
+    public function confirmDelete(int $id, string $name): void
+    {
+        $this->deletingId = $id;
+        $this->deletingName = $name;
+        $this->activeUsersCount = Role::query()->findOrFail($id)
+            ->users()
+            ->where('is_active', true)
+            ->count();
+        $this->showDeleteModal = true;
+    }
+
+    public function executeDelete(): void
+    {
+        if ($this->deletingId === null) {
+            return;
+        }
+
+        if ($this->activeUsersCount > 0) {
+            session()->flash('error', 'Role tidak dapat dihapus karena masih memiliki ' . $this->activeUsersCount . ' user aktif.');
+            $this->showDeleteModal = false;
+            $this->deletingId = null;
+            $this->deletingName = '';
+            $this->activeUsersCount = 0;
+
+            return;
+        }
+
+        $role = Role::query()->findOrFail($this->deletingId);
+        $role->delete();
+        session()->flash('success', 'Role berhasil dihapus.');
+        $this->showDeleteModal = false;
+        $this->deletingId = null;
+        $this->deletingName = '';
+        $this->activeUsersCount = 0;
+        $this->resetPage();
+    }
+
+    public function cancelDelete(): void
+    {
+        $this->showDeleteModal = false;
+        $this->deletingId = null;
+        $this->deletingName = '';
+        $this->activeUsersCount = 0;
     }
 
     public function delete(int $id): void

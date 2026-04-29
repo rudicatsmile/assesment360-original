@@ -60,6 +60,12 @@ class UserDirectory extends Component
 
     public string $sortDirection = 'desc';
 
+    public bool $showDeleteModal = false;
+
+    public ?int $deletingUserId = null;
+
+    public string $deletingUserName = '';
+
     public function mount(): void
     {
         abort_unless(auth()->user()?->isAdminRole(), 403);
@@ -190,6 +196,52 @@ class UserDirectory extends Component
 
         $this->resetForm();
         $this->resetPage();
+    }
+
+    public function confirmDeleteUser(int $userId, string $userName): void
+    {
+        $this->deletingUserId = $userId;
+        $this->deletingUserName = $userName;
+        $this->showDeleteModal = true;
+    }
+
+    public function executeDeleteUser(): void
+    {
+        if ($this->deletingUserId === null) {
+            return;
+        }
+
+        $user = User::query()->findOrFail($this->deletingUserId);
+
+        if ((int) auth()->id() === (int) $user->id) {
+            session()->flash('error', 'Anda tidak dapat menghapus akun sendiri.');
+            $this->showDeleteModal = false;
+            $this->deletingUserId = null;
+            $this->deletingUserName = '';
+
+            return;
+        }
+
+        $user->delete();
+
+        Log::warning('admin.users.delete.livewire', [
+            'actor_id' => auth()->id(),
+            'target_user_id' => $user->id,
+            'target_email' => $user->email,
+        ]);
+
+        session()->flash('success', 'Pengguna berhasil dihapus (soft delete).');
+        $this->showDeleteModal = false;
+        $this->deletingUserId = null;
+        $this->deletingUserName = '';
+        $this->resetPage();
+    }
+
+    public function cancelDeleteUser(): void
+    {
+        $this->showDeleteModal = false;
+        $this->deletingUserId = null;
+        $this->deletingUserName = '';
     }
 
     public function deleteUser(int $userId): void

@@ -32,6 +32,14 @@ class DepartmentDirectory extends Component
 
     public string $description = '';
 
+    public bool $showDeleteModal = false;
+
+    public ?int $deletingId = null;
+
+    public string $deletingName = '';
+
+    public int $activeUsersCount = 0;
+
     public function mount(): void
     {
         abort_unless(auth()->user()?->isAdminRole(), 403);
@@ -97,6 +105,55 @@ class DepartmentDirectory extends Component
 
         $this->resetForm();
         $this->resetPage();
+    }
+
+    public function confirmDelete(int $id, string $name): void
+    {
+        $this->deletingId = $id;
+        $this->deletingName = $name;
+        $this->activeUsersCount = Departement::query()->findOrFail($id)
+            ->users()
+            ->where('is_active', true)
+            ->count();
+        $this->showDeleteModal = true;
+    }
+
+    public function executeDelete(): void
+    {
+        if ($this->deletingId === null) {
+            return;
+        }
+
+        if ($this->activeUsersCount > 0) {
+            session()->flash('error', 'Department tidak dapat dihapus karena masih memiliki ' . $this->activeUsersCount . ' user aktif.');
+            $this->showDeleteModal = false;
+            $this->deletingId = null;
+            $this->deletingName = '';
+            $this->activeUsersCount = 0;
+
+            return;
+        }
+
+        $item = Departement::query()->findOrFail($this->deletingId);
+        $item->delete();
+        Log::warning('admin.departements.delete.livewire', [
+            'actor_id' => auth()->id(),
+            'departement_id' => $item->id,
+        ]);
+        session()->flash('success', 'Department berhasil dihapus.');
+        $this->showDeleteModal = false;
+        $this->deletingId = null;
+        $this->deletingName = '';
+        $this->activeUsersCount = 0;
+        $this->resetPage();
+    }
+
+    public function cancelDelete(): void
+    {
+        $this->showDeleteModal = false;
+        $this->deletingId = null;
+        $this->deletingName = '';
+        $this->activeUsersCount = 0;
     }
 
     public function delete(int $id): void
