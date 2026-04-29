@@ -5,6 +5,9 @@
             <p class="text-sm text-zinc-500">Analisis hasil penilaian berdasarkan departemen.</p>
         </div>
         <div class="flex items-center gap-2">
+            <flux:button variant="ghost" icon="chart-bar" wire:click="toggleCharts">
+                {{ $showCharts ? 'Sembunyikan Chart' : 'Tampilkan Chart' }}
+            </flux:button>
             <a href="{{ $this->exportExcelUrl() }}">
                 <flux:button variant="filled" icon="arrow-down-tray">Export Excel</flux:button>
             </a>
@@ -60,84 +63,84 @@
         <span>Memuat analitik role department...</span>
     </div>
 
-    <section class="grid gap-4 lg:grid-cols-2">
-        <article
-            class="group relative overflow-hidden rounded-xl border border-zinc-200 bg-white p-5 shadow-sm transition-shadow hover:shadow-md">
-            <div class="mb-3 flex items-center justify-between">
-                <h2 class="text-sm font-semibold text-zinc-800">Rata-rata Skor Antar Department</h2>
-                <div wire:loading.remove wire:target="dateFrom,dateTo,departmentFilter"
-                    class="opacity-0 transition-opacity group-hover:opacity-100">
-                    <button wire:click="refreshCharts"
-                        class="rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600"
-                        title="Refresh Chart">
-                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <section class="grid gap-4 lg:grid-cols-2 {{ $showCharts ? '' : 'hidden' }}">
+            <article
+                class="group relative overflow-hidden rounded-xl border border-zinc-200 bg-white p-5 shadow-sm transition-shadow hover:shadow-md">
+                <div class="mb-3 flex items-center justify-between">
+                    <h2 class="text-sm font-semibold text-zinc-800">Rata-rata Skor Antar Department</h2>
+                    <div wire:loading.remove wire:target="dateFrom,dateTo,departmentFilter"
+                        class="opacity-0 transition-opacity group-hover:opacity-100">
+                        <button wire:click="refreshCharts"
+                            class="rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600"
+                            title="Refresh Chart">
+                            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div wire:loading wire:target="dateFrom,dateTo,departmentFilter"
+                    class="flex h-56 items-center justify-center">
+                    <div class="flex flex-col items-center gap-2">
+                        <div class="h-8 w-8 animate-spin rounded-full border-4 border-zinc-200 border-t-blue-600"></div>
+                        <span class="text-xs text-zinc-500">Memuat grafik...</span>
+                    </div>
+                </div>
+                <canvas wire:loading.remove wire:target="dateFrom,dateTo,departmentFilter" id="department-score-bar"
+                    class="transition-opacity group-hover:opacity-[0.98]" height="220"></canvas>
+                @if (count($chart['labels']) === 0)
+                    <div class="absolute inset-0 flex flex-col items-center justify-center bg-zinc-50 text-center">
+                        <svg class="mb-2 h-12 w-12 text-zinc-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                         </svg>
-                    </button>
-                </div>
-            </div>
-            <div wire:loading wire:target="dateFrom,dateTo,departmentFilter"
-                class="flex h-56 items-center justify-center">
-                <div class="flex flex-col items-center gap-2">
-                    <div class="h-8 w-8 animate-spin rounded-full border-4 border-zinc-200 border-t-blue-600"></div>
-                    <span class="text-xs text-zinc-500">Memuat grafik...</span>
-                </div>
-            </div>
-            <canvas wire:loading.remove wire:target="dateFrom,dateTo,departmentFilter" id="department-score-bar"
-                class="transition-opacity group-hover:opacity-[0.98]" height="220"></canvas>
-            @if (count($chart['labels']) === 0)
-                <div class="absolute inset-0 flex flex-col items-center justify-center bg-zinc-50 text-center">
-                    <svg class="mb-2 h-12 w-12 text-zinc-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                    </svg>
-                    <p class="text-sm text-zinc-500">Belum ada data department</p>
-                    <p class="mt-1 text-xs text-zinc-400">Data akan muncul setelah ada responden</p>
-                </div>
-            @endif
-        </article>
+                        <p class="text-sm text-zinc-500">Belum ada data department</p>
+                        <p class="mt-1 text-xs text-zinc-400">Data akan muncul setelah ada responden</p>
+                    </div>
+                @endif
+            </article>
 
-        <article
-            class="group relative overflow-hidden rounded-xl border border-zinc-200 bg-white p-5 shadow-sm transition-shadow hover:shadow-md">
-            <div class="mb-3 flex items-center justify-between">
-                <h2 class="text-sm font-semibold text-zinc-800">Tingkat Partisipasi per Department (%)</h2>
-                <div wire:loading.remove wire:target="dateFrom,dateTo,departmentFilter"
-                    class="opacity-0 transition-opacity group-hover:opacity-100">
-                    <button wire:click="refreshCharts"
-                        class="rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600"
-                        title="Refresh Chart">
-                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <article
+                class="group relative overflow-hidden rounded-xl border border-zinc-200 bg-white p-5 shadow-sm transition-shadow hover:shadow-md">
+                <div class="mb-3 flex items-center justify-between">
+                    <h2 class="text-sm font-semibold text-zinc-800">Tingkat Partisipasi per Department (%)</h2>
+                    <div wire:loading.remove wire:target="dateFrom,dateTo,departmentFilter"
+                        class="opacity-0 transition-opacity group-hover:opacity-100">
+                        <button wire:click="refreshCharts"
+                            class="rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600"
+                            title="Refresh Chart">
+                            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div wire:loading wire:target="dateFrom,dateTo,departmentFilter"
+                    class="flex h-56 items-center justify-center">
+                    <div class="flex flex-col items-center gap-2">
+                        <div class="h-8 w-8 animate-spin rounded-full border-4 border-zinc-200 border-t-emerald-600"></div>
+                        <span class="text-xs text-zinc-500">Memuat grafik...</span>
+                    </div>
+                </div>
+                <canvas wire:loading.remove wire:target="dateFrom,dateTo,departmentFilter"
+                    id="department-participation-donut" class="transition-opacity group-hover:opacity-[0.98]"
+                    height="220"></canvas>
+                @if (count($chart['labels']) === 0)
+                    <div class="absolute inset-0 flex flex-col items-center justify-center bg-zinc-50 text-center">
+                        <svg class="mb-2 h-12 w-12 text-zinc-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" />
                         </svg>
-                    </button>
-                </div>
-            </div>
-            <div wire:loading wire:target="dateFrom,dateTo,departmentFilter"
-                class="flex h-56 items-center justify-center">
-                <div class="flex flex-col items-center gap-2">
-                    <div class="h-8 w-8 animate-spin rounded-full border-4 border-zinc-200 border-t-emerald-600"></div>
-                    <span class="text-xs text-zinc-500">Memuat grafik...</span>
-                </div>
-            </div>
-            <canvas wire:loading.remove wire:target="dateFrom,dateTo,departmentFilter"
-                id="department-participation-donut" class="transition-opacity group-hover:opacity-[0.98]"
-                height="220"></canvas>
-            @if (count($chart['labels']) === 0)
-                <div class="absolute inset-0 flex flex-col items-center justify-center bg-zinc-50 text-center">
-                    <svg class="mb-2 h-12 w-12 text-zinc-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" />
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" />
-                    </svg>
-                    <p class="text-sm text-zinc-500">Belum ada data department</p>
-                    <p class="mt-1 text-xs text-zinc-400">Data akan muncul setelah ada responden</p>
-                </div>
-            @endif
-        </article>
-    </section>
+                        <p class="text-sm text-zinc-500">Belum ada data department</p>
+                        <p class="mt-1 text-xs text-zinc-400">Data akan muncul setelah ada responden</p>
+                    </div>
+                @endif
+            </article>
+        </section>
 
     <section class="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
         <div class="overflow-x-auto">
@@ -219,15 +222,15 @@
                                             wire:click="toggleRole({{ $roleRow['role_id'] }})">
                                             <span>{{ $roleRow['role_name'] }}</span>
                                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" style="
-                                                                width: 14px;
-                                                                height: 14px;
-                                                                min-width: 14px;
-                                                                display: inline-block;
-                                                                vertical-align: middle;
-                                                                transition: transform 320ms ease;
-                                                                transform-origin: 50% 50%;
-                                                                transform: {{ $expandedRoleId === $roleRow['role_id'] ? 'rotate(180deg)' : 'rotate(0deg)' }};
-                                                            ">
+                                                                            width: 14px;
+                                                                            height: 14px;
+                                                                            min-width: 14px;
+                                                                            display: inline-block;
+                                                                            vertical-align: middle;
+                                                                            transition: transform 320ms ease;
+                                                                            transform-origin: 50% 50%;
+                                                                            transform: {{ $expandedRoleId === $roleRow['role_id'] ? 'rotate(180deg)' : 'rotate(0deg)' }};
+                                                                        ">
                                                 <path fill-rule="evenodd"
                                                     d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.168l3.71-3.94a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z"
                                                     clip-rule="evenodd" />
@@ -566,6 +569,17 @@
             }
         });
 
+        window.addEventListener('charts-shown', function () {
+            setTimeout(function () {
+                if (window.departmentScoreChart) {
+                    window.departmentScoreChart.resize();
+                }
+                if (window.departmentParticipationChart) {
+                    window.departmentParticipationChart.resize();
+                }
+            }, 100);
+        });
+
         if (typeof Livewire !== 'undefined') {
             Livewire.hook('message.processed', (message, component) => {
                 if (component.name === 'admin.department-analytics') {
@@ -648,7 +662,8 @@
                                                         <div class="shrink-0 rounded-lg bg-emerald-50 px-3 py-2 text-center">
                                                             <p class="text-xs font-medium text-emerald-600 uppercase tracking-wide">Skor</p>
                                                             <p class="text-lg font-bold text-emerald-700">
-                                                                {{ number_format($detail['score'], 2) }}</p>
+                                                                {{ number_format($detail['score'], 2) }}
+                                                            </p>
                                                         </div>
                                                     @endif
                                                 </div>

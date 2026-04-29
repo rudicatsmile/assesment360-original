@@ -58,6 +58,8 @@ class DepartmentAnalytics extends Component
 
     public ?string $userDetailErrorMessage = null;
 
+    public bool $showCharts = false;
+
     public function mount(): void
     {
         abort_unless(auth()->user()?->isAdminRole(), 403);
@@ -273,6 +275,14 @@ class DepartmentAnalytics extends Component
         $this->selectedUserName = '';
         $this->userDetailAnswers = [];
         $this->userDetailErrorMessage = null;
+    }
+
+    public function toggleCharts(): void
+    {
+        $this->showCharts = !$this->showCharts;
+        if ($this->showCharts) {
+            $this->dispatch('charts-shown');
+        }
     }
 
     private function refreshSelectedDepartmentRoles(): void
