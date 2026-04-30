@@ -20,12 +20,53 @@
 
 <body class="min-h-screen bg-zinc-100 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
     @php
-        $role = auth()->user()?->roleRef?->name;
-        $roleSlug = auth()->user()?->roleSlug();
-        $department = auth()->user()?->departmentRef?->name;
+        $currentUser = auth()->user();
+        $role = $currentUser?->roleRef?->name;
+        $roleSlug = $currentUser?->roleSlug();
+        $department = $currentUser?->departmentRef?->name;
         $dashboardPath = (string) (config("rbac.dashboard_paths.{$roleSlug}") ?? '/fill/questionnaires');
         $dashboardRoute = url($dashboardPath);
         $isFillingQuestionnaire = request()->routeIs('fill.questionnaires.index');
+
+        // For multi-department evaluators who completed all evaluations,
+        // re-enable navigation links even on the questionnaire route
+        if ($isFillingQuestionnaire && $currentUser) {
+            $evalDepts = $currentUser->evaluableDepartments()->orderBy('urut')->get();
+
+            if ($evalDepts->count() > 1) {
+                $targetAliases = (array) config('rbac.questionnaire_target_aliases', []);
+                $targetGroups = array_values(array_unique(array_filter([
+                    $roleSlug,
+                    (string) ($targetAliases[$roleSlug] ?? ''),
+                ])));
+
+                $targetedQuestionnaireIds = \App\Models\Questionnaire::where('status', 'active')
+                    ->whereHas('targets', function ($q) use ($targetGroups) {
+                        $q->whereIn('target_group', $targetGroups);
+                    })
+                    ->pluck('id');
+
+                if ($targetedQuestionnaireIds->count() > 0) {
+                    $allCompleted = true;
+                    foreach ($evalDepts as $dept) {
+                        $submittedCount = \App\Models\Response::where('user_id', $currentUser->id)
+                            ->where('target_department_id', $dept->id)
+                            ->where('status', 'submitted')
+                            ->whereIn('questionnaire_id', $targetedQuestionnaireIds)
+                            ->count();
+
+                        if ($submittedCount < $targetedQuestionnaireIds->count()) {
+                            $allCompleted = false;
+                            break;
+                        }
+                    }
+
+                    if ($allCompleted) {
+                        $isFillingQuestionnaire = false;
+                    }
+                }
+            }
+        }
     @endphp
 
     <div class="mx-auto max-w-5xl p-4 md:p-6">
