@@ -51,11 +51,14 @@ class AvailableQuestionnaires extends Component
     /** Whether to show the start confirmation popup before beginning */
     public bool $showStartConfirmation = false;
 
-    /** Timestamp when the fill session started (from user.filling_started_at) */
+    /** Timestamp when the current department's fill session started (from pivot.filling_started_at) */
     public ?string $fillingStartedAt = null;
 
     /** Total time limit in minutes (from user.time_limit_minutes) */
     public ?int $timeLimitMinutes = null;
+
+    /** Name of the department whose timer just expired, for UI message */
+    public ?string $expiredDepartmentName = null;
 
     /** 0-based index into questionnaireIds (the fillable list) */
     public int $currentIndex = 0;
@@ -79,19 +82,21 @@ class AvailableQuestionnaires extends Component
         if ($evalDepts->count() > 1) {
             $this->evaluableDepartments = $evalDepts;
             $this->showDepartmentPicker = true;
+            $this->timeLimitMinutes = $user?->time_limit_minutes;
             $this->loadCompletedDepartments();
             return;
         } elseif ($evalDepts->count() === 1) {
             $this->selectedTargetDepartmentId = $evalDepts->first()->id;
             $this->showDepartmentPicker = false;
+            $this->evaluableDepartments = $evalDepts;
         } else {
             $this->selectedTargetDepartmentId = null;
             $this->showDepartmentPicker = false;
         }
 
         $this->loadQuestionnaires();
-        $this->initializeSessionTimer();
-        $this->checkTimeExpiry();
+        $this->initializeDepartmentTimer();
+        $this->checkDepartmentTimeExpiry();
     }
 
     public function render()
@@ -177,7 +182,7 @@ class AvailableQuestionnaires extends Component
         $submittedCount = count($this->allQuestionnaireIds) - $totalFillable;
         $isLast = $this->currentIndex >= $totalFillable - 1;
 
-        // Build session-based time limit info (from user-level settings)
+        // Build per-department time limit info (from pivot table)
         // Do NOT build timeLimitInfo when start confirmation popup is showing –
         // the timer must not tick until the user explicitly clicks "Mulai Sekarang".
         $timeLimitInfo = null;
@@ -190,6 +195,25 @@ class AvailableQuestionnaires extends Component
                 'expired' => $remainingSeconds <= 0,
                 'time_limit_minutes' => $this->timeLimitMinutes,
             ];
+        }
+
+        // Build per-department timer info for the department picker view
+        $departmentTimerInfo = [];
+        if ($this->showDepartmentPicker && $this->timeLimitMinutes !== null) {
+            $user = Auth::user();
+            $depts = $user->evaluableDepartments()->get();
+            foreach ($depts as $dept) {
+                $startedAt = $dept->pivot->filling_started_at;
+                $info = ['started' => false, 'expired' => false, 'remaining_seconds' => 0];
+                if ($startedAt) {
+                    $info['started'] = true;
+                    $deadline = CarbonImmutable::parse($startedAt)->addMinutes($this->timeLimitMinutes);
+                    $remaining = max(0, (int) now()->diffInSeconds($deadline, false));
+                    $info['remaining_seconds'] = $remaining;
+                    $info['expired'] = $remaining <= 0;
+                }
+                $departmentTimerInfo[$dept->id] = $info;
+            }
         }
 
         return view('livewire.fill.available-questionnaires', [
@@ -206,6 +230,7 @@ class AvailableQuestionnaires extends Component
             'submittedCount' => $submittedCount,
             'timeLimitInfo' => $timeLimitInfo,
             'currentQuestionnaireComplete' => $currentQuestionnaireComplete,
+            'departmentTimerInfo' => $departmentTimerInfo,
         ]);
     }
 
@@ -306,7 +331,7 @@ class AvailableQuestionnaires extends Component
 
     /**
      * Called by client-side timer when time expires.
-     * Auto-submits whatever answers have been filled so far.
+     * Auto-submits answers for the current department only.
      */
     public function autoSubmitOnTimeExpired(): void
     {
@@ -314,7 +339,21 @@ class AvailableQuestionnaires extends Component
             return;
         }
 
-        $this->doSubmitAll(true);
+        $this->timeExpired = true;
+        $deptId = $this->selectedTargetDepartmentId;
+
+        // Get department name for UI message
+        $dept = collect($this->evaluableDepartments)->firstWhere('id', $deptId);
+        $this->expiredDepartmentName = $dept?->name ?? 'Department';
+
+        // Persist any dirty drafts before auto-submitting
+        $this->persistAllDrafts();
+
+        $this->doSubmitAllForDepartment($deptId, true);
+        $this->loadCompletedDepartments();
+
+        // For multi-department users, allow them to go back to picker
+        // Don't lock the entire form
     }
 
     public function loadCompletedDepartments(): void
@@ -362,13 +401,27 @@ class AvailableQuestionnaires extends Component
 
         $this->selectedTargetDepartmentId = $departmentId;
         $this->showDepartmentPicker = false;
+        $this->timeExpired = false;
+        $this->expiredDepartmentName = null;
 
         $this->loadQuestionnaires();
-        $this->initializeSessionTimer();
-        $this->checkTimeExpiry();
 
-        // Dispatch timer restart event for Alpine.js when timer is already running
-        if ($this->timeLimitMinutes !== null && $this->fillingStartedAt !== null) {
+        // Check background timers first (auto-submit expired departments)
+        $this->checkBackgroundTimers();
+
+        // Initialize timer for this specific department
+        $this->initializeDepartmentTimer();
+
+        // If this department already expired during background check
+        if ($this->timeExpired) {
+            $this->doSubmitAllForDepartment($departmentId, true);
+            $this->loadCompletedDepartments();
+            $this->showDepartmentPicker = true;
+            return;
+        }
+
+        // If timer already running, dispatch to Alpine
+        if ($this->timeLimitMinutes !== null && $this->fillingStartedAt !== null && !$this->showStartConfirmation) {
             $deadline = CarbonImmutable::parse($this->fillingStartedAt)->addMinutes($this->timeLimitMinutes);
             $remainingSeconds = max(0, (int) now()->diffInSeconds($deadline, false));
             $this->dispatch('start-timer', remainingSeconds: $remainingSeconds);
@@ -377,8 +430,18 @@ class AvailableQuestionnaires extends Component
 
     public function backToDepartmentPicker(): void
     {
+        // Persist any dirty drafts before leaving the current department
+        $this->persistAllDrafts();
+
         $this->showDepartmentPicker = true;
         $this->selectedTargetDepartmentId = null;
+        $this->timeExpired = false;
+        $this->showStartConfirmation = false;
+        $this->expiredDepartmentName = null;
+
+        // Check if any background timers expired while user was filling
+        $this->checkBackgroundTimers();
+
         $this->loadCompletedDepartments();
 
         $this->questionnaireIds = [];
@@ -388,7 +451,6 @@ class AvailableQuestionnaires extends Component
         $this->currentIndex = 0;
         $this->confirmSubmitAll = false;
         $this->dirtyQuestionIds = [];
-        $this->timeExpired = false;
         $this->lastDraftSavedAt = null;
     }
 
@@ -655,31 +717,77 @@ class AvailableQuestionnaires extends Component
     }
 
     /**
-     * Initialize the session timer from the authenticated user's time_limit_minutes.
-     * Sets filling_started_at on the user record if not already set.
+     * Initialize the department timer from the pivot table's filling_started_at.
+     * Reads per-department timer state for the currently selected department.
      */
-    private function initializeSessionTimer(): void
+    private function initializeDepartmentTimer(): void
     {
         $user = Auth::user();
         $this->timeLimitMinutes = $user?->time_limit_minutes;
-        $this->fillingStartedAt = $user?->filling_started_at?->toIso8601String();
 
-        // If user has a time limit and hasn't started yet, show the start confirmation popup
-        // instead of auto-starting the timer. The timer only starts when they confirm.
-        if ($this->timeLimitMinutes !== null && $this->fillingStartedAt === null) {
+        if ($this->timeLimitMinutes === null) {
+            // No time limit configured
+            $this->fillingStartedAt = null;
+            $this->showStartConfirmation = false;
+            return;
+        }
+
+        $deptId = $this->selectedTargetDepartmentId;
+
+        if ($deptId !== null) {
+            // Read filling_started_at from pivot for current department
+            $pivotData = $user->evaluableDepartments()
+                ->where('department_id', $deptId)
+                ->first();
+
+            $this->fillingStartedAt = $pivotData?->pivot?->filling_started_at
+                ? CarbonImmutable::parse($pivotData->pivot->filling_started_at)->toIso8601String()
+                : null;
+        } else {
+            // Fallback for users without evaluable departments: use user-level field
+            $this->fillingStartedAt = $user?->filling_started_at?->toIso8601String();
+        }
+
+        if ($this->fillingStartedAt === null) {
+            // Department timer not started yet
             $this->showStartConfirmation = true;
+        } else {
+            $this->showStartConfirmation = false;
+            // Check if already expired
+            $deadline = CarbonImmutable::parse($this->fillingStartedAt)->addMinutes($this->timeLimitMinutes);
+            if (now()->isAfter($deadline)) {
+                $this->timeExpired = true;
+            }
         }
     }
 
     /**
-     * User confirmed to start the fill session – start the timer.
+     * User confirmed to start the fill session – start the timer for the current department.
      */
     public function confirmStart(): void
     {
         $user = Auth::user();
-        $user->update(['filling_started_at' => now()]);
-        $user->refresh();
-        $this->fillingStartedAt = $user->filling_started_at?->toIso8601String();
+        $deptId = $this->selectedTargetDepartmentId;
+
+        if ($deptId !== null) {
+            // Multi/single-dept user with pivot entry: update pivot table
+            $user->evaluableDepartments()->updateExistingPivot($deptId, [
+                'filling_started_at' => now(),
+            ]);
+
+            $pivotData = $user->evaluableDepartments()
+                ->where('department_id', $deptId)
+                ->first();
+            $this->fillingStartedAt = $pivotData?->pivot?->filling_started_at
+                ? CarbonImmutable::parse($pivotData->pivot->filling_started_at)->toIso8601String()
+                : now()->toIso8601String();
+        } else {
+            // User without evaluable departments: fallback to user-level timestamp
+            $user->update(['filling_started_at' => now()]);
+            $user->refresh();
+            $this->fillingStartedAt = $user->filling_started_at?->toIso8601String() ?? now()->toIso8601String();
+        }
+
         $this->showStartConfirmation = false;
 
         $deadline = CarbonImmutable::parse($this->fillingStartedAt)->addMinutes($this->timeLimitMinutes);
@@ -698,10 +806,10 @@ class AvailableQuestionnaires extends Component
     }
 
     /**
-     * Check if the session time limit has expired.
-     * If so, auto-submit all answers and lock the form.
+     * Check if the current department's time limit has expired.
+     * If so, auto-submit all answers for that department and lock the form.
      */
-    private function checkTimeExpiry(): void
+    private function checkDepartmentTimeExpiry(): void
     {
         if ($this->timeLimitMinutes === null || $this->fillingStartedAt === null) {
             return;
@@ -712,6 +820,83 @@ class AvailableQuestionnaires extends Component
         if (now()->isAfter($deadline)) {
             $this->timeExpired = true;
             $this->doSubmitAll(true);
+        }
+    }
+
+    /**
+     * Check all departments for expired background timers.
+     * Auto-submits answers for any department whose timer has run out.
+     */
+    private function checkBackgroundTimers(): void
+    {
+        if ($this->timeLimitMinutes === null) {
+            return;
+        }
+
+        $user = Auth::user();
+        $depts = $user->evaluableDepartments()->get();
+
+        foreach ($depts as $dept) {
+            $startedAt = $dept->pivot->filling_started_at;
+            if ($startedAt === null) {
+                continue; // Not started yet
+            }
+
+            // Skip already completed departments
+            if (in_array($dept->id, $this->completedTargetDepartmentIds)) {
+                continue;
+            }
+
+            $deadline = CarbonImmutable::parse($startedAt)->addMinutes($this->timeLimitMinutes);
+            if (now()->isAfter($deadline)) {
+                // This department's timer expired - auto-submit its answers
+                $this->doSubmitAllForDepartment($dept->id, true);
+            }
+        }
+
+        // Refresh completed departments list
+        $this->loadCompletedDepartments();
+    }
+
+    /**
+     * Submit all questionnaire responses for a specific department.
+     * Used for auto-submit when a department's timer expires (both current and background).
+     *
+     * @param int $departmentId The department to submit responses for
+     * @param bool $isAutoSubmit When true, skips validation and forces submit of whatever is filled
+     */
+    private function doSubmitAllForDepartment(int $departmentId, bool $isAutoSubmit = false): void
+    {
+        $user = Auth::user();
+
+        // Get all active questionnaire IDs targeted at this user's role
+        $roleSlug = $user?->roleSlug() ?? '';
+        $targetAliases = (array) config('rbac.questionnaire_target_aliases', []);
+        $targetGroups = array_values(array_unique(array_filter([
+            $roleSlug,
+            (string) ($targetAliases[$roleSlug] ?? ''),
+        ])));
+
+        $targetedQuestionnaireIds = Questionnaire::where('status', 'active')
+            ->whereHas('targets', fn($q) => $q->whereIn('target_group', $targetGroups))
+            ->pluck('id');
+
+        foreach ($targetedQuestionnaireIds as $questionnaireId) {
+            $response = Response::firstOrCreate(
+                [
+                    'user_id' => $user->id,
+                    'questionnaire_id' => $questionnaireId,
+                    'target_department_id' => $departmentId,
+                ],
+                ['status' => 'draft']
+            );
+
+            if ($response->status !== 'submitted') {
+                $response->update([
+                    'status' => 'submitted',
+                    'submitted_at' => now(),
+                ]);
+            }
         }
     }
 
@@ -763,10 +948,12 @@ class AvailableQuestionnaires extends Component
                 ]);
                 $responseId = $response->id;
             } else {
-                Response::where('id', $responseId)->update([
-                    'status' => 'submitted',
-                    'submitted_at' => now(),
-                ]);
+                Response::where('id', $responseId)
+                    ->where('target_department_id', $this->selectedTargetDepartmentId)
+                    ->update([
+                        'status' => 'submitted',
+                        'submitted_at' => now(),
+                    ]);
             }
 
             DB::transaction(function () use ($questions, $responseId, $scorer, $timestamp, $user): void {

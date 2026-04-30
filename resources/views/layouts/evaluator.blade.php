@@ -28,43 +28,15 @@
         $dashboardRoute = url($dashboardPath);
         $isFillingQuestionnaire = request()->routeIs('fill.questionnaires.index');
 
-        // For multi-department evaluators who completed all evaluations,
-        // re-enable navigation links even on the questionnaire route
+        // For multi-department evaluators, always enable navigation.
+        // The timer is per-department and runs in background –
+        // there is no risk of "escaping" the timer by navigating away.
+        // When the user returns, the timer picks up where it left off.
         if ($isFillingQuestionnaire && $currentUser) {
             $evalDepts = $currentUser->evaluableDepartments()->orderBy('urut')->get();
 
             if ($evalDepts->count() > 1) {
-                $targetAliases = (array) config('rbac.questionnaire_target_aliases', []);
-                $targetGroups = array_values(array_unique(array_filter([
-                    $roleSlug,
-                    (string) ($targetAliases[$roleSlug] ?? ''),
-                ])));
-
-                $targetedQuestionnaireIds = \App\Models\Questionnaire::where('status', 'active')
-                    ->whereHas('targets', function ($q) use ($targetGroups) {
-                        $q->whereIn('target_group', $targetGroups);
-                    })
-                    ->pluck('id');
-
-                if ($targetedQuestionnaireIds->count() > 0) {
-                    $allCompleted = true;
-                    foreach ($evalDepts as $dept) {
-                        $submittedCount = \App\Models\Response::where('user_id', $currentUser->id)
-                            ->where('target_department_id', $dept->id)
-                            ->where('status', 'submitted')
-                            ->whereIn('questionnaire_id', $targetedQuestionnaireIds)
-                            ->count();
-
-                        if ($submittedCount < $targetedQuestionnaireIds->count()) {
-                            $allCompleted = false;
-                            break;
-                        }
-                    }
-
-                    if ($allCompleted) {
-                        $isFillingQuestionnaire = false;
-                    }
-                }
+                $isFillingQuestionnaire = false;
             }
         }
     @endphp

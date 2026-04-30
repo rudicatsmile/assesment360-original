@@ -322,16 +322,25 @@
                 @foreach($evaluableDepartments as $dept)
                     @php
                         $isCompleted = in_array($dept->id, $completedTargetDepartmentIds);
+                        $timerInfo = $departmentTimerInfo[$dept->id] ?? null;
+                        $deptExpired = $timerInfo && $timerInfo['expired'];
+                        $deptStarted = $timerInfo && $timerInfo['started'];
+                        $deptRemaining = $timerInfo ? $timerInfo['remaining_seconds'] : 0;
+                        $deptMinutes = floor($deptRemaining / 60);
+                        $deptSeconds = $deptRemaining % 60;
+                        $deptTimeFormatted = sprintf('%02d:%02d', $deptMinutes, $deptSeconds);
                     @endphp
-                    <div @if(!$isCompleted) wire:click="selectTargetDepartment({{ $dept->id }})" @endif
+                    <div @if(!$isCompleted && !$deptExpired) wire:click="selectTargetDepartment({{ $dept->id }})" @endif
                         class="group relative overflow-hidden rounded-2xl border transition-all duration-300
-                                                                                                                {{ $isCompleted
+                                                                                                                        {{ $isCompleted
                     ? 'border-green-200 bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 dark:border-green-700/60'
-                    : 'border-zinc-200/80 dark:border-zinc-700/60 bg-white dark:bg-zinc-800 hover:border-blue-400 hover:shadow-lg hover:shadow-blue-100/50 hover:-translate-y-0.5 cursor-pointer' }}">
+                    : ($deptExpired
+                        ? 'border-red-200 bg-gradient-to-br from-red-50 to-orange-50 dark:from-red-900/20 dark:to-orange-900/20 dark:border-red-700/60'
+                        : 'border-zinc-200/80 dark:border-zinc-700/60 bg-white dark:bg-zinc-800 hover:border-blue-400 hover:shadow-lg hover:shadow-blue-100/50 hover:-translate-y-0.5 cursor-pointer') }}">
 
                         {{-- Decorative top accent bar --}}
                         <div
-                            class="h-1 {{ $isCompleted ? 'bg-gradient-to-r from-green-400 to-emerald-500' : 'bg-gradient-to-r from-blue-400 to-indigo-500 group-hover:from-blue-500 group-hover:to-indigo-600' }}">
+                            class="h-1 {{ $isCompleted ? 'bg-gradient-to-r from-green-400 to-emerald-500' : ($deptExpired ? 'bg-gradient-to-r from-red-400 to-orange-500' : 'bg-gradient-to-r from-blue-400 to-indigo-500 group-hover:from-blue-500 group-hover:to-indigo-600') }}">
                         </div>
 
                         <div class="p-6">
@@ -347,6 +356,20 @@
                                         </svg>
                                     </div>
                                     <h3 class="text-lg font-semibold text-green-700 dark:text-green-400">
+                                        {{ $dept->name }}
+                                    </h3>
+                                </div>
+                            @elseif($deptExpired)
+                                <div class="flex items-center gap-3 mb-3">
+                                    <div
+                                        class="flex items-center justify-center w-8 h-8 rounded-full bg-red-100 dark:bg-red-800/40">
+                                        <svg class="w-5 h-5 text-red-600 dark:text-red-400" fill="none" stroke="currentColor"
+                                            viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0Z" />
+                                        </svg>
+                                    </div>
+                                    <h3 class="text-lg font-semibold text-red-700 dark:text-red-400">
                                         {{ $dept->name }}
                                     </h3>
                                 </div>
@@ -367,11 +390,22 @@
                             @endif
 
                             <p
-                                class="text-sm {{ $isCompleted ? 'text-green-600 dark:text-green-500' : 'text-zinc-500 dark:text-zinc-400' }}">
-                                {{ $isCompleted ? 'Evaluasi selesai' : 'Klik untuk mulai evaluasi' }}
+                                class="text-sm {{ $isCompleted ? 'text-green-600 dark:text-green-500' : ($deptExpired ? 'text-red-600 dark:text-red-500' : 'text-zinc-500 dark:text-zinc-400') }}">
+                                {{ $isCompleted ? 'Evaluasi selesai' : ($deptExpired ? 'Waktu Habis' : ($deptStarted ? 'Sisa waktu: ' . $deptTimeFormatted : 'Klik untuk mulai evaluasi')) }}
                             </p>
 
-                            @if(!$isCompleted)
+                            @if($deptStarted && !$deptExpired && !$isCompleted)
+                                <div
+                                    class="mt-2 inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-700">
+                                    <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                            d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                                    </svg>
+                                    Sisa waktu: {{ $deptTimeFormatted }}
+                                </div>
+                            @endif
+
+                            @if(!$isCompleted && !$deptExpired)
                                 <div
                                     class="mt-3 flex items-center text-xs font-medium text-blue-500 dark:text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity">
                                     <span>Mulai sekarang</span>
@@ -467,7 +501,11 @@
                             </div>
                             <div>
                                 <h3 class="text-lg font-bold">Siap Mengisi Kuisioner?</h3>
-                                <p class="text-sm text-blue-100">Baca informasi berikut sebelum memulai</p>
+                                @if($selectedTargetDepartmentId)
+                                    <p class="text-sm text-blue-100 mt-1">
+                                        Lembaga: {{ \App\Models\Departement::find($selectedTargetDepartmentId)?->name }}
+                                    </p>
+                                @endif
                             </div>
                         </div>
                     </div>
@@ -508,7 +546,7 @@
                                     <p class="font-semibold text-amber-800">Batas Waktu Pengisian</p>
                                     <p class="mt-1 text-2xl font-bold text-amber-900">{{ $timeDisplay }}</p>
                                     <p class="mt-1 text-xs text-amber-600">Timer akan mulai berjalan setelah Anda menekan tombol
-                                        "Mulai Sekarang"</p>
+                                        "Mulai Sekarang" untuk lembaga ini</p>
                                 </div>
                             </div>
                         </div>
@@ -550,9 +588,15 @@
 
                     {{-- Footer buttons --}}
                     <div class="flex gap-3 border-t border-zinc-100 bg-zinc-50 px-6 py-4">
-                        <flux:button variant="outline" size="sm" wire:click="cancelStart" class="flex-1">
-                            Batal
-                        </flux:button>
+                        @if(count($evaluableDepartments) > 1)
+                            <flux:button variant="outline" size="sm" wire:click="backToDepartmentPicker" class="flex-1">
+                                Kembali
+                            </flux:button>
+                        @else
+                            <flux:button variant="outline" size="sm" wire:click="cancelStart" class="flex-1">
+                                Batal
+                            </flux:button>
+                        @endif
                         <flux:button variant="primary" size="sm" wire:click="confirmStart" class="flex-1">
                             Mulai Sekarang
                         </flux:button>
@@ -563,7 +607,6 @@
 
         {{-- Time Expired Notice --}}
         @if ($timeExpired)
-            {{-- Attractive expired popup --}}
             <div x-show="timeExpired" x-transition:enter="transition ease-out duration-300"
                 x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100"
                 class="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" style="display:none;">
@@ -576,11 +619,23 @@
                         </svg>
                     </div>
                     <h3 class="text-lg font-bold text-red-700">Waktu Habis!</h3>
-                    <p class="mt-2 text-sm text-zinc-600">Batas waktu pengisian kuisioner telah berakhir.</p>
+                    @if($expiredDepartmentName)
+                        <p class="mt-2 text-sm text-zinc-600">Batas waktu pengisian kuisioner untuk
+                            <strong>{{ $expiredDepartmentName }}</strong> telah berakhir.</p>
+                    @else
+                        <p class="mt-2 text-sm text-zinc-600">Batas waktu pengisian kuisioner telah berakhir.</p>
+                    @endif
                     <div class="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
                         Jawaban yang sudah Anda isi telah <strong>disimpan dan dikirim</strong> secara otomatis.
                     </div>
-                    <p class="mt-3 text-xs text-zinc-400">Anda tidak dapat melanjutkan pengisian kuisioner.</p>
+                    @if(count($evaluableDepartments) > 1)
+                        <button wire:click="backToDepartmentPicker"
+                            class="mt-4 inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium">
+                            Kembali ke Pilihan Department
+                        </button>
+                    @else
+                        <p class="mt-3 text-xs text-zinc-400">Anda tidak dapat melanjutkan pengisian kuisioner.</p>
+                    @endif
                 </div>
             </div>
         @endif

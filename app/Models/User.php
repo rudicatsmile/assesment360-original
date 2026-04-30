@@ -105,6 +105,6 @@ class User extends Authenticatable
             'user_evaluable_departments',
             'user_id',
             'department_id'
-        )->withTimestamps();
+        )->withPivot('filling_started_at')->withTimestamps();
     }
 }
