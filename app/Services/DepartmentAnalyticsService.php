@@ -26,6 +26,12 @@ class DepartmentAnalyticsService
         int $perPage = 10,
         int $page = 1
     ): array {
+        // Note: Multi-department evaluation compatible — answers.department_id
+        // reflects the evaluated department (target), not the evaluator's own department.
+        // $employeesSub uses users.department_id (correct: counts members IN the dept).
+        // $respondentsSub uses users.department_id (correct: measures dept's own employees' participation).
+        // $scoresSub uses answers.department_id (correct: scores about the target dept).
+
         $employeesSub = DB::table('users')
             ->selectRaw('department_id, COUNT(*) as total_employees')
             ->whereNotNull('department_id')
@@ -123,16 +129,31 @@ class DepartmentAnalyticsService
             $departmentName = (string) (Departement::query()->where('id', $departmentId)->value('name') ?? '');
 
             $totalByRoleSub = DB::table('users')
-                ->selectRaw('role_id, COUNT(DISTINCT id) as total_users')
-                ->where('department_id', $departmentId)
-                ->whereNotNull('role_id')
-                ->whereNull('deleted_at')
-                ->groupBy('role_id');
+                ->join('responses', 'responses.user_id', '=', 'users.id')
+                ->selectRaw('users.role_id, COUNT(DISTINCT users.id) as total_users')
+                ->where(function ($query) use ($departmentId) {
+                    $query->where('responses.target_department_id', $departmentId)
+                        ->orWhere(function ($q) use ($departmentId) {
+                            $q->where('users.department_id', $departmentId)
+                                ->whereNull('responses.target_department_id');
+                        });
+                })
+                ->where('responses.status', 'submitted')
+                ->whereNull('responses.deleted_at')
+                ->whereNotNull('users.role_id')
+                ->whereNull('users.deleted_at')
+                ->groupBy('users.role_id');
 
             $activeRespondentsSub = DB::table('responses')
                 ->join('users', 'users.id', '=', 'responses.user_id')
                 ->selectRaw('users.role_id, COUNT(DISTINCT users.id) as active_respondents')
-                ->where('users.department_id', $departmentId)
+                ->where(function ($query) use ($departmentId) {
+                    $query->where('responses.target_department_id', $departmentId)
+                        ->orWhere(function ($q) use ($departmentId) {
+                            $q->where('users.department_id', $departmentId)
+                                ->whereNull('responses.target_department_id');
+                        });
+                })
                 ->whereNotNull('users.role_id')
                 ->whereNull('users.deleted_at')
                 ->where('responses.status', 'submitted')
@@ -141,11 +162,14 @@ class DepartmentAnalyticsService
                 ->when($dateTo, fn($query) => $query->whereDate('responses.submitted_at', '<=', $dateTo))
                 ->groupBy('users.role_id');
 
+            // Use answers.department_id (target dept) instead of users.department_id (evaluator's dept)
+            // so the average score reflects how this department was evaluated, consistent with
+            // the department-level score in summarize() which also uses answers.department_id.
             $averageScoreSub = DB::table('answers')
                 ->join('responses', 'responses.id', '=', 'answers.response_id')
                 ->join('users', 'users.id', '=', 'responses.user_id')
                 ->selectRaw('users.role_id, AVG(answers.calculated_score) as average_score')
-                ->where('users.department_id', $departmentId)
+                ->where('answers.department_id', $departmentId)
                 ->whereNotNull('users.role_id')
                 ->whereNull('users.deleted_at')
                 ->where('responses.status', 'submitted')
@@ -213,17 +237,24 @@ class DepartmentAnalyticsService
         ]);
 
         return Cache::remember($cacheKey, now()->addMinutes(5), function () use ($departmentId, $roleId, $dateFrom, $dateTo): array {
+            // Scope submissions to the target department so that multi-dept evaluators'
+            // submissions for other departments are not counted in this department's analytics.
+            // orWhereNull handles legacy responses before target_department_id was added.
             $submissionSub = DB::table('responses')
                 ->selectRaw('user_id, COUNT(*) as total_submissions')
                 ->where('status', 'submitted')
                 ->whereNull('deleted_at')
+                ->where(fn($q) => $q->where('target_department_id', $departmentId)->orWhereNull('target_department_id'))
                 ->when($dateFrom, fn($query) => $query->whereDate('submitted_at', '>=', $dateFrom))
                 ->when($dateTo, fn($query) => $query->whereDate('submitted_at', '<=', $dateTo))
                 ->groupBy('user_id');
 
+            // Scope scores to answers about this department (target) so that multi-dept
+            // evaluators' scores for other departments are excluded.
             $scoreSub = DB::table('answers')
                 ->join('responses', 'responses.id', '=', 'answers.response_id')
                 ->selectRaw('responses.user_id, AVG(answers.calculated_score) as average_score')
+                ->where('answers.department_id', $departmentId)
                 ->where('responses.status', 'submitted')
                 ->whereNull('responses.deleted_at')
                 ->whereNull('answers.deleted_at')
@@ -232,10 +263,12 @@ class DepartmentAnalyticsService
                 ->when($dateTo, fn($query) => $query->whereDate('responses.submitted_at', '<=', $dateTo))
                 ->groupBy('responses.user_id');
 
+            // Scope drafts to the target department for consistent status tracking.
             $hasDraftSub = DB::table('responses')
                 ->selectRaw('user_id, 1 as has_draft')
                 ->where('status', 'draft')
                 ->whereNull('deleted_at')
+                ->where(fn($q) => $q->where('target_department_id', $departmentId)->orWhereNull('target_department_id'))
                 ->when($dateFrom, fn($query) => $query->whereDate('started_at', '>=', $dateFrom))
                 ->when($dateTo, fn($query) => $query->whereDate('started_at', '<=', $dateTo))
                 ->groupBy('user_id');
@@ -244,7 +277,20 @@ class DepartmentAnalyticsService
                 ->leftJoinSub($submissionSub, 'sub', fn($join) => $join->on('sub.user_id', '=', 'users.id'))
                 ->leftJoinSub($scoreSub, 'sc', fn($join) => $join->on('sc.user_id', '=', 'users.id'))
                 ->leftJoinSub($hasDraftSub, 'hd', fn($join) => $join->on('hd.user_id', '=', 'users.id'))
-                ->where('users.department_id', $departmentId)
+                ->whereIn('users.id', function ($sub) use ($departmentId) {
+                    $sub->select('responses.user_id')
+                        ->from('responses')
+                        ->where(function ($q) use ($departmentId) {
+                            $q->where('responses.target_department_id', $departmentId)
+                                ->orWhere(function ($inner) use ($departmentId) {
+                                    $inner->whereNull('responses.target_department_id')
+                                        ->whereIn('responses.user_id', function ($userSub) use ($departmentId) {
+                                            $userSub->select('id')->from('users')->where('department_id', $departmentId);
+                                        });
+                                });
+                        })
+                        ->whereNull('responses.deleted_at');
+                })
                 ->where('users.role_id', $roleId)
                 ->whereNull('users.deleted_at')
                 ->orderBy('users.name')

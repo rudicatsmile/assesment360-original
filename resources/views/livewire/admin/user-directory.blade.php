@@ -137,6 +137,22 @@
                             @error('department_id') <span class="text-xs text-rose-600">{{ $message }}</span> @enderror
                         </div>
 
+                        <div class="space-y-1.5 md:col-span-2">
+                            <flux:heading size="sm" class="mb-2">Department yang Bisa Dievaluasi</flux:heading>
+                            <flux:text size="sm" class="mb-2 text-zinc-500">Pilih department yang bisa dievaluasi oleh user
+                                ini. Jika tidak ada yang dipilih, user mengikuti flow normal.</flux:text>
+                            <div class="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto border rounded-lg p-3">
+                                @foreach($departments as $dept)
+                                    <label
+                                        class="flex items-center gap-2 text-sm cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-700 rounded px-2 py-1">
+                                        <input type="checkbox" wire:model="selectedEvaluableDepartments" value="{{ $dept->id }}"
+                                            class="rounded border-zinc-300 text-blue-600 focus:ring-blue-500">
+                                        <span>{{ $dept->name }}</span>
+                                    </label>
+                                @endforeach
+                            </div>
+                        </div>
+
                         <div class="space-y-1.5">
                             <label class="flex items-center gap-2.5 text-sm font-medium text-zinc-700">
                                 <svg class="h-4 w-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -290,7 +306,12 @@
                                 </div>
                             </td>
                             <td class="px-4 py-3 text-zinc-700">{{ $user->roleRef?->name ?: $user->role }}</td>
-                            <td class="px-4 py-3 text-zinc-700">{{ $user->departmentRef?->name ?: '-' }}</td>
+                            <td class="px-4 py-3 text-zinc-700">
+                                {{ $user->departmentRef?->name ?: '-' }}
+                                @if($user->evaluable_departments_count > 0)
+                                    <flux:badge size="sm" color="indigo" class="ml-1">Multi-Dept</flux:badge>
+                                @endif
+                            </td>
                             <td class="px-4 py-3">
                                 <span
                                     class="rounded-full px-2 py-1 text-xs font-medium {{ $user->is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-zinc-200 text-zinc-700' }}">

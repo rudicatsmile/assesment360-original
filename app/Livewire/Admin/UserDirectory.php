@@ -52,6 +52,8 @@ class UserDirectory extends Component
 
     public bool $is_active = true;
 
+    public array $selectedEvaluableDepartments = [];
+
     /** @var int|null Hours component of time limit */
     public ?int $time_limit_hours = null;
 
@@ -106,6 +108,7 @@ class UserDirectory extends Component
     public function startCreate(): void
     {
         $this->resetForm();
+        $this->selectedEvaluableDepartments = [];
         $this->showForm = true;
     }
 
@@ -131,6 +134,8 @@ class UserDirectory extends Component
             $this->time_limit_hours = null;
             $this->time_limit_minutes = null;
         }
+
+        $this->selectedEvaluableDepartments = $user->evaluableDepartments()->pluck('departements.id')->map(fn($id) => (string) $id)->toArray();
 
         $this->showForm = true;
         $this->resetErrorBag();
@@ -170,6 +175,10 @@ class UserDirectory extends Component
 
             $user->save();
 
+            $user->evaluableDepartments()->sync(
+                collect($this->selectedEvaluableDepartments)->filter()->map(fn($id) => (int) $id)->toArray()
+            );
+
             Log::info('admin.users.update.livewire', [
                 'actor_id' => auth()->id(),
                 'target_user_id' => $user->id,
@@ -200,6 +209,10 @@ class UserDirectory extends Component
 
             session()->flash('success', 'Pengguna berhasil ditambahkan.');
         }
+
+        $user->evaluableDepartments()->sync(
+            collect($this->selectedEvaluableDepartments)->filter()->map(fn($id) => (int) $id)->toArray()
+        );
 
         $this->resetForm();
         $this->resetPage();
@@ -353,6 +366,7 @@ class UserDirectory extends Component
         $this->is_active = true;
         $this->time_limit_hours = null;
         $this->time_limit_minutes = null;
+        $this->selectedEvaluableDepartments = [];
         $this->resetErrorBag();
     }
 
@@ -467,6 +481,7 @@ class UserDirectory extends Component
                 $query->orderBy($this->sortBy, $this->sortDirection);
             })
             ->with(['departmentRef:id,name', 'roleRef:id,name,slug'])
+            ->withCount('evaluableDepartments')
             ->paginate($this->perPage);
 
         $departments = Departement::query()

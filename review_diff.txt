@@ -1,0 +1,1463 @@
+diff --git a/app/Livewire/Admin/UserDirectory.php b/app/Livewire/Admin/UserDirectory.php
+index 789725a..fa05eaf 100644
+--- a/app/Livewire/Admin/UserDirectory.php
++++ b/app/Livewire/Admin/UserDirectory.php
+@@ -52,6 +52,8 @@ class UserDirectory extends Component
+ 
+     public bool $is_active = true;
+ 
++    public array $selectedEvaluableDepartments = [];
++
+     /** @var int|null Hours component of time limit */
+     public ?int $time_limit_hours = null;
+ 
+@@ -106,6 +108,7 @@ public function updatingQuestionnaireFilter(): void
+     public function startCreate(): void
+     {
+         $this->resetForm();
++        $this->selectedEvaluableDepartments = [];
+         $this->showForm = true;
+     }
+ 
+@@ -132,6 +135,8 @@ public function startEdit(int $userId): void
+             $this->time_limit_minutes = null;
+         }
+ 
++        $this->selectedEvaluableDepartments = $user->evaluableDepartments()->pluck('departements.id')->map(fn($id) => (string) $id)->toArray();
++
+         $this->showForm = true;
+         $this->resetErrorBag();
+     }
+@@ -170,6 +175,10 @@ public function saveUser(): void
+ 
+             $user->save();
+ 
++            $user->evaluableDepartments()->sync(
++                collect($this->selectedEvaluableDepartments)->filter()->map(fn($id) => (int) $id)->toArray()
++            );
++
+             Log::info('admin.users.update.livewire', [
+                 'actor_id' => auth()->id(),
+                 'target_user_id' => $user->id,
+@@ -201,6 +210,10 @@ public function saveUser(): void
+             session()->flash('success', 'Pengguna berhasil ditambahkan.');
+         }
+ 
++        $user->evaluableDepartments()->sync(
++            collect($this->selectedEvaluableDepartments)->filter()->map(fn($id) => (int) $id)->toArray()
++        );
++
+         $this->resetForm();
+         $this->resetPage();
+     }
+@@ -353,6 +366,7 @@ private function resetForm(): void
+         $this->is_active = true;
+         $this->time_limit_hours = null;
+         $this->time_limit_minutes = null;
++        $this->selectedEvaluableDepartments = [];
+         $this->resetErrorBag();
+     }
+ 
+@@ -467,6 +481,7 @@ public function render()
+                 $query->orderBy($this->sortBy, $this->sortDirection);
+             })
+             ->with(['departmentRef:id,name', 'roleRef:id,name,slug'])
++            ->withCount('evaluableDepartments')
+             ->paginate($this->perPage);
+ 
+         $departments = Departement::query()
+diff --git a/app/Livewire/Fill/AvailableQuestionnaires.php b/app/Livewire/Fill/AvailableQuestionnaires.php
+index 35e76cf..be6d27d 100644
+--- a/app/Livewire/Fill/AvailableQuestionnaires.php
++++ b/app/Livewire/Fill/AvailableQuestionnaires.php
+@@ -9,6 +9,7 @@
+ use App\Services\QuestionnaireScorer;
+ use Carbon\CarbonImmutable;
+ use Illuminate\Support\Arr;
++use Illuminate\Support\Collection;
+ use Illuminate\Support\Facades\Auth;
+ use Illuminate\Support\Facades\DB;
+ use Livewire\Attributes\Layout;
+@@ -59,8 +60,35 @@ class AvailableQuestionnaires extends Component
+     /** 0-based index into questionnaireIds (the fillable list) */
+     public int $currentIndex = 0;
+ 
++    public ?int $selectedTargetDepartmentId = null;
++
++    public bool $showDepartmentPicker = false;
++
++    /** @var Collection<int, \App\Models\Departement>|array<int, \App\Models\Departement> */
++    public Collection|array $evaluableDepartments = [];
++
++    /** @var list<int> */
++    public array $completedTargetDepartmentIds = [];
++
+     public function mount(): void
+     {
++        $user = Auth::user();
++
++        $evalDepts = $user?->evaluableDepartments()->get() ?? collect();
++
++        if ($evalDepts->count() > 1) {
++            $this->evaluableDepartments = $evalDepts;
++            $this->showDepartmentPicker = true;
++            $this->loadCompletedDepartments();
++            return;
++        } elseif ($evalDepts->count() === 1) {
++            $this->selectedTargetDepartmentId = $evalDepts->first()->id;
++            $this->showDepartmentPicker = false;
++        } else {
++            $this->selectedTargetDepartmentId = null;
++            $this->showDepartmentPicker = false;
++        }
++
+         $this->loadQuestionnaires();
+         $this->initializeSessionTimer();
+         $this->checkTimeExpiry();
+@@ -289,6 +317,64 @@ public function autoSubmitOnTimeExpired(): void
+         $this->doSubmitAll(true);
+     }
+ 
++    public function loadCompletedDepartments(): void
++    {
++        $user = Auth::user();
++        $roleSlug = $user?->roleSlug() ?? '';
++        $targetAliases = (array) config('rbac.questionnaire_target_aliases', []);
++        $targetGroups = array_values(array_unique(array_filter([
++            $roleSlug,
++            (string) ($targetAliases[$roleSlug] ?? ''),
++        ])));
++
++        $targetedQuestionnaireIds = Questionnaire::where('status', 'active')
++            ->whereHas('targets', function ($q) use ($targetGroups) {
++                $q->whereIn('target_group', $targetGroups);
++            })
++            ->pluck('id');
++
++        $this->completedTargetDepartmentIds = [];
++
++        foreach ($this->evaluableDepartments as $dept) {
++            $submittedCount = Response::where('user_id', $user?->id)
++                ->where('target_department_id', $dept->id)
++                ->where('status', 'submitted')
++                ->whereIn('questionnaire_id', $targetedQuestionnaireIds)
++                ->count();
++
++            if ($submittedCount >= $targetedQuestionnaireIds->count() && $targetedQuestionnaireIds->count() > 0) {
++                $this->completedTargetDepartmentIds[] = $dept->id;
++            }
++        }
++    }
++
++    public function selectTargetDepartment(int $departmentId): void
++    {
++        $this->selectedTargetDepartmentId = $departmentId;
++        $this->showDepartmentPicker = false;
++
++        $this->loadQuestionnaires();
++        $this->initializeSessionTimer();
++        $this->checkTimeExpiry();
++    }
++
++    public function backToDepartmentPicker(): void
++    {
++        $this->showDepartmentPicker = true;
++        $this->selectedTargetDepartmentId = null;
++        $this->loadCompletedDepartments();
++
++        $this->questionnaireIds = [];
++        $this->allQuestionnaireIds = [];
++        $this->questionnaireMeta = [];
++        $this->answers = [];
++        $this->currentIndex = 0;
++        $this->confirmSubmitAll = false;
++        $this->dirtyQuestionIds = [];
++        $this->timeExpired = false;
++        $this->lastDraftSavedAt = null;
++    }
++
+     private function loadQuestionnaires(): void
+     {
+         $user = Auth::user();
+@@ -322,6 +408,7 @@ private function loadQuestionnaires(): void
+             $response = Response::query()
+                 ->where('questionnaire_id', $questionnaire->id)
+                 ->where('user_id', $user->id)
++                ->where('target_department_id', $this->selectedTargetDepartmentId)
+                 ->first();
+ 
+             $status = 'not_started';
+@@ -434,6 +521,7 @@ private function persistDraftForQuestions(int $questionnaireId, array $questionI
+                 'user_id' => $user->id,
+                 'status' => 'draft',
+                 'submitted_at' => null,
++                'target_department_id' => $this->selectedTargetDepartmentId,
+             ]);
+             $responseId = $response->id;
+             $this->questionnaireMeta[$questionnaireId]['response_id'] = $responseId;
+@@ -464,7 +552,7 @@ private function persistDraftForQuestions(int $questionnaireId, array $questionI
+             $upsertRows[] = [
+                 'response_id' => $responseId,
+                 'question_id' => (int) $questionId,
+-                'department_id' => $user?->department_id,
++                'department_id' => $this->selectedTargetDepartmentId ?? $user?->department_id,
+                 'answer_option_id' => $optionId,
+                 'essay_answer' => $essayValue,
+                 'calculated_score' => null,
+@@ -643,6 +731,7 @@ private function doSubmitAll(bool $isAutoSubmit): void
+                     'user_id' => $user->id,
+                     'status' => 'submitted',
+                     'submitted_at' => now(),
++                    'target_department_id' => $this->selectedTargetDepartmentId,
+                 ]);
+                 $responseId = $response->id;
+             } else {
+@@ -671,7 +760,7 @@ private function doSubmitAll(bool $isAutoSubmit): void
+                         [[
+                             'response_id' => $responseId,
+                             'question_id' => $question->id,
+-                            'department_id' => $user?->department_id,
++                            'department_id' => $this->selectedTargetDepartmentId ?? $user?->department_id,
+                             'answer_option_id' => $optionId,
+                             'essay_answer' => $essayValue,
+                             'calculated_score' => $scorer->calculateScoreForAnswer($question, $optionId),
+@@ -700,5 +789,10 @@ private function doSubmitAll(bool $isAutoSubmit): void
+             $count = count($this->allQuestionnaireIds);
+             session()->flash('success', "Semua {$count} kuisioner berhasil dikirim!");
+         }
++
++        if (count($this->evaluableDepartments) > 1) {
++            $this->backToDepartmentPicker();
++            return;
++        }
+     }
+ }
+diff --git a/app/Models/Departement.php b/app/Models/Departement.php
+index c051dcb..d789baf 100644
+--- a/app/Models/Departement.php
++++ b/app/Models/Departement.php
+@@ -3,6 +3,7 @@
+ namespace App\Models;
+ 
+ use Illuminate\Database\Eloquent\Factories\HasFactory;
++use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+ use Illuminate\Database\Eloquent\Relations\HasMany;
+ use Illuminate\Database\Eloquent\Model;
+ 
+@@ -35,4 +36,14 @@ public function answerOptions(): HasMany
+     {
+         return $this->hasMany(AnswerOption::class, 'department_id');
+     }
++
++    public function evaluators(): BelongsToMany
++    {
++        return $this->belongsToMany(
++            User::class,
++            'user_evaluable_departments',
++            'department_id',
++            'user_id'
++        )->withTimestamps();
++    }
+ }
+diff --git a/app/Models/Response.php b/app/Models/Response.php
+index 8d69e8e..7e8ec0e 100644
+--- a/app/Models/Response.php
++++ b/app/Models/Response.php
+@@ -16,6 +16,7 @@ class Response extends Model
+     protected $fillable = [
+         'questionnaire_id',
+         'user_id',
++        'target_department_id',
+         'started_at',
+         'submitted_at',
+         'status',
+@@ -36,6 +37,11 @@ public function user(): BelongsTo
+         return $this->belongsTo(User::class);
+     }
+ 
++    public function targetDepartment(): BelongsTo
++    {
++        return $this->belongsTo(Departement::class, 'target_department_id');
++    }
++
+     public function answers(): HasMany
+     {
+         return $this->hasMany(Answer::class);
+diff --git a/app/Models/User.php b/app/Models/User.php
+index 22190aa..935bd61 100644
+--- a/app/Models/User.php
++++ b/app/Models/User.php
+@@ -4,6 +4,7 @@
+ 
+ use Illuminate\Database\Eloquent\Factories\HasFactory;
+ use Illuminate\Database\Eloquent\Relations\BelongsTo;
++use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+ use Illuminate\Database\Eloquent\Relations\HasMany;
+ use Illuminate\Foundation\Auth\User as Authenticatable;
+ use Illuminate\Notifications\Notifiable;
+@@ -96,4 +97,14 @@ public function canManageRoles(): bool
+     {
+         return $this->isAdminRole();
+     }
++
++    public function evaluableDepartments(): BelongsToMany
++    {
++        return $this->belongsToMany(
++            Departement::class,
++            'user_evaluable_departments',
++            'user_id',
++            'department_id'
++        )->withTimestamps();
++    }
+ }
+diff --git a/app/Services/DepartmentAnalyticsService.php b/app/Services/DepartmentAnalyticsService.php
+index 930f4b2..e95c621 100644
+--- a/app/Services/DepartmentAnalyticsService.php
++++ b/app/Services/DepartmentAnalyticsService.php
+@@ -26,6 +26,12 @@ public function summarize(
+         int $perPage = 10,
+         int $page = 1
+     ): array {
++        // Note: Multi-department evaluation compatible — answers.department_id
++        // reflects the evaluated department (target), not the evaluator's own department.
++        // $employeesSub uses users.department_id (correct: counts members IN the dept).
++        // $respondentsSub uses users.department_id (correct: measures dept's own employees' participation).
++        // $scoresSub uses answers.department_id (correct: scores about the target dept).
++
+         $employeesSub = DB::table('users')
+             ->selectRaw('department_id, COUNT(*) as total_employees')
+             ->whereNotNull('department_id')
+@@ -141,11 +147,14 @@ public function summarizeRolesByDepartment(
+                 ->when($dateTo, fn($query) => $query->whereDate('responses.submitted_at', '<=', $dateTo))
+                 ->groupBy('users.role_id');
+ 
++            // Use answers.department_id (target dept) instead of users.department_id (evaluator's dept)
++            // so the average score reflects how this department was evaluated, consistent with
++            // the department-level score in summarize() which also uses answers.department_id.
+             $averageScoreSub = DB::table('answers')
+                 ->join('responses', 'responses.id', '=', 'answers.response_id')
+                 ->join('users', 'users.id', '=', 'responses.user_id')
+                 ->selectRaw('users.role_id, AVG(answers.calculated_score) as average_score')
+-                ->where('users.department_id', $departmentId)
++                ->where('answers.department_id', $departmentId)
+                 ->whereNotNull('users.role_id')
+                 ->whereNull('users.deleted_at')
+                 ->where('responses.status', 'submitted')
+@@ -213,17 +222,24 @@ public function summarizeUsersByDepartmentRole(
+         ]);
+ 
+         return Cache::remember($cacheKey, now()->addMinutes(5), function () use ($departmentId, $roleId, $dateFrom, $dateTo): array {
++            // Scope submissions to the target department so that multi-dept evaluators'
++            // submissions for other departments are not counted in this department's analytics.
++            // orWhereNull handles legacy responses before target_department_id was added.
+             $submissionSub = DB::table('responses')
+                 ->selectRaw('user_id, COUNT(*) as total_submissions')
+                 ->where('status', 'submitted')
+                 ->whereNull('deleted_at')
++                ->where(fn($q) => $q->where('target_department_id', $departmentId)->orWhereNull('target_department_id'))
+                 ->when($dateFrom, fn($query) => $query->whereDate('submitted_at', '>=', $dateFrom))
+                 ->when($dateTo, fn($query) => $query->whereDate('submitted_at', '<=', $dateTo))
+                 ->groupBy('user_id');
+ 
++            // Scope scores to answers about this department (target) so that multi-dept
++            // evaluators' scores for other departments are excluded.
+             $scoreSub = DB::table('answers')
+                 ->join('responses', 'responses.id', '=', 'answers.response_id')
+                 ->selectRaw('responses.user_id, AVG(answers.calculated_score) as average_score')
++                ->where('answers.department_id', $departmentId)
+                 ->where('responses.status', 'submitted')
+                 ->whereNull('responses.deleted_at')
+                 ->whereNull('answers.deleted_at')
+@@ -232,10 +248,12 @@ public function summarizeUsersByDepartmentRole(
+                 ->when($dateTo, fn($query) => $query->whereDate('responses.submitted_at', '<=', $dateTo))
+                 ->groupBy('responses.user_id');
+ 
++            // Scope drafts to the target department for consistent status tracking.
+             $hasDraftSub = DB::table('responses')
+                 ->selectRaw('user_id, 1 as has_draft')
+                 ->where('status', 'draft')
+                 ->whereNull('deleted_at')
++                ->where(fn($q) => $q->where('target_department_id', $departmentId)->orWhereNull('target_department_id'))
+                 ->when($dateFrom, fn($query) => $query->whereDate('started_at', '>=', $dateFrom))
+                 ->when($dateTo, fn($query) => $query->whereDate('started_at', '<=', $dateTo))
+                 ->groupBy('user_id');
+diff --git a/resources/views/livewire/admin/user-directory.blade.php b/resources/views/livewire/admin/user-directory.blade.php
+index 8275ad0..40ae9a7 100644
+--- a/resources/views/livewire/admin/user-directory.blade.php
++++ b/resources/views/livewire/admin/user-directory.blade.php
+@@ -137,6 +137,22 @@ class="w-full rounded-lg border border-zinc-300 px-4 py-3 text-sm focus:border-b
+                             @error('department_id') <span class="text-xs text-rose-600">{{ $message }}</span> @enderror
+                         </div>
+ 
++                        <div class="space-y-1.5 md:col-span-2">
++                            <flux:heading size="sm" class="mb-2">Department yang Bisa Dievaluasi</flux:heading>
++                            <flux:text size="sm" class="mb-2 text-zinc-500">Pilih department yang bisa dievaluasi oleh user
++                                ini. Jika tidak ada yang dipilih, user mengikuti flow normal.</flux:text>
++                            <div class="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto border rounded-lg p-3">
++                                @foreach($departments as $dept)
++                                    <label
++                                        class="flex items-center gap-2 text-sm cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-700 rounded px-2 py-1">
++                                        <input type="checkbox" wire:model="selectedEvaluableDepartments" value="{{ $dept->id }}"
++                                            class="rounded border-zinc-300 text-blue-600 focus:ring-blue-500">
++                                        <span>{{ $dept->name }}</span>
++                                    </label>
++                                @endforeach
++                            </div>
++                        </div>
++
+                         <div class="space-y-1.5">
+                             <label class="flex items-center gap-2.5 text-sm font-medium text-zinc-700">
+                                 <svg class="h-4 w-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+@@ -290,7 +306,12 @@ class="text-[10px] text-zinc-500">{{ $sortBy === 'is_active' ? ($sortDirection =
+                                 </div>
+                             </td>
+                             <td class="px-4 py-3 text-zinc-700">{{ $user->roleRef?->name ?: $user->role }}</td>
+-                            <td class="px-4 py-3 text-zinc-700">{{ $user->departmentRef?->name ?: '-' }}</td>
++                            <td class="px-4 py-3 text-zinc-700">
++                                {{ $user->departmentRef?->name ?: '-' }}
++                                @if($user->evaluable_departments_count > 0)
++                                    <flux:badge size="sm" color="indigo" class="ml-1">Multi-Dept</flux:badge>
++                                @endif
++                            </td>
+                             <td class="px-4 py-3">
+                                 <span
+                                     class="rounded-full px-2 py-1 text-xs font-medium {{ $user->is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-zinc-200 text-zinc-700' }}">
+diff --git a/resources/views/livewire/fill/available-questionnaires.blade.php b/resources/views/livewire/fill/available-questionnaires.blade.php
+index 61aa854..216c30e 100644
+--- a/resources/views/livewire/fill/available-questionnaires.blade.php
++++ b/resources/views/livewire/fill/available-questionnaires.blade.php
+@@ -284,383 +284,423 @@
+             window.scrollTo({ top: 0, behavior: 'smooth' });
+         });
+     ">
+-    {{-- Hidden inputs that Livewire morphs with server-side values --}}
+-    <input type="hidden" id="timer-remaining-seconds" value="{{ $timeLimitInfo['remaining_seconds'] ?? 0 }}">
+-    <input type="hidden" id="current-questionnaire-complete" value="{{ $currentQuestionnaireComplete ? '1' : '0' }}">
+-    <input type="hidden" id="current-index" value="{{ $currentIndex }}">
+-
+-    {{-- Page Header --}}
+-    <div>
+-        <h2 class="text-2xl font-semibold text-zinc-900">Kuisioner Saya</h2>
+-        <p class="text-sm text-zinc-500">Isi semua kuisioner aktif yang tersedia untuk Anda, lalu kirim sekaligus.</p>
+-    </div>
+-
+-    {{-- Flash Messages --}}
+-    @if (session('success'))
+-        <div class="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+-            {{ session('success') }}
+-        </div>
+-    @endif
++    @if($showDepartmentPicker)
++        {{-- Department Picker --}}
++        <div class="max-w-4xl mx-auto py-8 px-4">
++            <div class="text-center mb-8">
++                <h2 class="text-2xl font-bold text-zinc-800 dark:text-zinc-200">Pilih Department untuk Dievaluasi</h2>
++                <p class="text-zinc-500 mt-2">Pilih salah satu department di bawah ini untuk mulai mengisi kuisioner
++                    evaluasi.</p>
++            </div>
+ 
+-    @if (session('error'))
+-        <div class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+-            {{ session('error') }}
+-        </div>
+-    @endif
++            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
++                @foreach($evaluableDepartments as $dept)
++                    @php
++                        $isCompleted = in_array($dept->id, $completedTargetDepartmentIds);
++                    @endphp
++                    <div @if(!$isCompleted) wire:click="selectTargetDepartment({{ $dept->id }})" @endif
++                        class="relative p-6 rounded-xl border-2 transition-all duration-200
++                                {{ $isCompleted
++                    ? 'border-green-300 bg-green-50 dark:bg-green-900/20 dark:border-green-700'
++                    : 'border-zinc-200 dark:border-zinc-700 hover:border-blue-400 hover:shadow-md cursor-pointer bg-white dark:bg-zinc-800' }}">
++
++                        @if($isCompleted)
++                            <div class="absolute top-3 right-3">
++                                <svg class="w-6 h-6 text-green-500" fill="currentColor" viewBox="0 0 20 20">
++                                    <path fill-rule="evenodd"
++                                        d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
++                                        clip-rule="evenodd" />
++                                </svg>
++                            </div>
++                        @endif
+ 
+-    {{-- Start Confirmation Popup --}}
+-    @if ($showStartConfirmation)
+-        <div class="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-900 p-4" x-data="{ show: false }"
+-            x-init="$nextTick(() => show = true)" x-show="show" x-transition:enter="transition ease-out duration-300"
+-            x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100"
+-            style="display:none;">
+-            <div class="w-full max-w-md rounded-2xl bg-white p-0 shadow-2xl overflow-hidden">
+-                {{-- Header with gradient --}}
+-                <div class="bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-5 text-white">
+-                    <div class="flex items-center gap-3">
+-                        <div
+-                            class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white/20 backdrop-blur-sm">
+-                            <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+-                                <path stroke-linecap="round" stroke-linejoin="round"
+-                                    d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-7.548 0 2.25 2.25 0 00-1.976 2.192V19.5a2.25 2.25 0 002.25 2.25h.75" />
+-                            </svg>
+-                        </div>
+-                        <div>
+-                            <h3 class="text-lg font-bold">Siap Mengisi Kuisioner?</h3>
+-                            <p class="text-sm text-blue-100">Baca informasi berikut sebelum memulai</p>
+-                        </div>
++                        <h3
++                            class="text-lg font-semibold {{ $isCompleted ? 'text-green-700 dark:text-green-400' : 'text-zinc-800 dark:text-zinc-200' }}">
++                            {{ $dept->name }}
++                        </h3>
++
++                        <p class="mt-2 text-sm {{ $isCompleted ? 'text-green-600 dark:text-green-500' : 'text-zinc-500' }}">
++                            {{ $isCompleted ? 'Evaluasi selesai ✓' : 'Klik untuk mulai evaluasi' }}
++                        </p>
++                    </div>
++                @endforeach
++            </div>
++
++            @if(count($completedTargetDepartmentIds) === count($evaluableDepartments))
++                <div class="mt-8 text-center">
++                    <div class="mb-4 p-4 rounded-lg bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400">
++                        <p class="font-semibold">🎉 Semua evaluasi lembaga telah selesai!</p>
++                        <p class="text-sm mt-1">Terima kasih atas partisipasi Anda. Data akan direview oleh administrator.</p>
++                    </div>
++                    <a href="/"
++                        class="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
++                        Kembali ke Dashboard
++                    </a>
++                </div>
++            @endif
++        </div>
++    @else
++        @if($selectedTargetDepartmentId)
++            <div class="max-w-4xl mx-auto mb-4 px-4">
++                <div
++                    class="flex items-center justify-between p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
++                    <div class="flex items-center gap-2">
++                        <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
++                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
++                                d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
++                        </svg>
++                        <span class="text-sm font-medium text-blue-700 dark:text-blue-300">
++                            Mengevaluasi:
++                            {{ \App\Models\Departement::find($selectedTargetDepartmentId)?->name ?? 'Department' }}
++                        </span>
+                     </div>
++                    @if(count($evaluableDepartments) > 1)
++                        <button wire:click="backToDepartmentPicker"
++                            class="text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 underline">
++                            ← Kembali ke Pilihan Department
++                        </button>
++                    @endif
+                 </div>
++            </div>
++        @endif
+ 
+-                {{-- Body --}}
+-                <div class="px-6 py-5 space-y-4">
+-                    {{-- Time limit card --}}
+-                    @php
+-                        $hours = intdiv($timeLimitMinutes ?? 0, 60);
+-                        $mins = ($timeLimitMinutes ?? 0) % 60;
+-                        $timeDisplay = '';
+-                        if ($hours > 0)
+-                            $timeDisplay .= $hours . ' jam ';
+-                        if ($mins > 0)
+-                            $timeDisplay .= $mins . ' menit';
+-                        if ($timeDisplay === '')
+-                            $timeDisplay = 'Tanpa batas';
+-
+-                        $totalQuestions = 0;
+-                        foreach ($questionnaireMeta as $qId => $meta) {
+-                            if ($meta['status'] !== 'submitted') {
+-                                $totalQuestions += $meta['questions_count'];
+-                            }
+-                        }
+-                        $fillableCount = count($questionnaireIds);
+-                    @endphp
++        {{-- Hidden inputs that Livewire morphs with server-side values --}}
++        <input type="hidden" id="timer-remaining-seconds" value="{{ $timeLimitInfo['remaining_seconds'] ?? 0 }}">
++        <input type="hidden" id="current-questionnaire-complete" value="{{ $currentQuestionnaireComplete ? '1' : '0' }}">
++        <input type="hidden" id="current-index" value="{{ $currentIndex }}">
+ 
+-                    <div class="rounded-xl border border-amber-200 bg-amber-50 p-4">
+-                        <div class="flex items-start gap-3">
+-                            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-100">
+-                                <svg class="h-5 w-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke-width="2"
+-                                    stroke="currentColor">
++        {{-- Page Header --}}
++        <div>
++            <h2 class="text-2xl font-semibold text-zinc-900">Kuisioner Saya</h2>
++            <p class="text-sm text-zinc-500">Isi semua kuisioner aktif yang tersedia untuk Anda, lalu kirim sekaligus.</p>
++        </div>
++
++        {{-- Flash Messages --}}
++        @if (session('success'))
++            <div class="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
++                {{ session('success') }}
++            </div>
++        @endif
++
++        @if (session('error'))
++            <div class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
++                {{ session('error') }}
++            </div>
++        @endif
++
++        {{-- Start Confirmation Popup --}}
++        @if ($showStartConfirmation)
++            <div class="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-900 p-4" x-data="{ show: false }"
++                x-init="$nextTick(() => show = true)" x-show="show" x-transition:enter="transition ease-out duration-300"
++                x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100"
++                style="display:none;">
++                <div class="w-full max-w-md rounded-2xl bg-white p-0 shadow-2xl overflow-hidden">
++                    {{-- Header with gradient --}}
++                    <div class="bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-5 text-white">
++                        <div class="flex items-center gap-3">
++                            <div
++                                class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white/20 backdrop-blur-sm">
++                                <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                                     <path stroke-linecap="round" stroke-linejoin="round"
+-                                        d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
++                                        d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-7.548 0 2.25 2.25 0 00-1.976 2.192V19.5a2.25 2.25 0 002.25 2.25h.75" />
+                                 </svg>
+                             </div>
+                             <div>
+-                                <p class="font-semibold text-amber-800">Batas Waktu Pengisian</p>
+-                                <p class="mt-1 text-2xl font-bold text-amber-900">{{ $timeDisplay }}</p>
+-                                <p class="mt-1 text-xs text-amber-600">Timer akan mulai berjalan setelah Anda menekan tombol
+-                                    "Mulai Sekarang"</p>
++                                <h3 class="text-lg font-bold">Siap Mengisi Kuisioner?</h3>
++                                <p class="text-sm text-blue-100">Baca informasi berikut sebelum memulai</p>
+                             </div>
+                         </div>
+                     </div>
+ 
+-                    {{-- Info cards --}}
+-                    <div class="grid grid-cols-2 gap-3">
+-                        <div class="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-center">
+-                            <p class="text-2xl font-bold text-zinc-900">{{ $fillableCount }}</p>
+-                            <p class="text-xs text-zinc-500">Kuisioner</p>
+-                        </div>
+-                        <div class="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-center">
+-                            <p class="text-2xl font-bold text-zinc-900">{{ $totalQuestions }}</p>
+-                            <p class="text-xs text-zinc-500">Total Pertanyaan</p>
++                    {{-- Body --}}
++                    <div class="px-6 py-5 space-y-4">
++                        {{-- Time limit card --}}
++                        @php
++                            $hours = intdiv($timeLimitMinutes ?? 0, 60);
++                            $mins = ($timeLimitMinutes ?? 0) % 60;
++                            $timeDisplay = '';
++                            if ($hours > 0)
++                                $timeDisplay .= $hours . ' jam ';
++                            if ($mins > 0)
++                                $timeDisplay .= $mins . ' menit';
++                            if ($timeDisplay === '')
++                                $timeDisplay = 'Tanpa batas';
++
++                            $totalQuestions = 0;
++                            foreach ($questionnaireMeta as $qId => $meta) {
++                                if ($meta['status'] !== 'submitted') {
++                                    $totalQuestions += $meta['questions_count'];
++                                }
++                            }
++                            $fillableCount = count($questionnaireIds);
++                        @endphp
++
++                        <div class="rounded-xl border border-amber-200 bg-amber-50 p-4">
++                            <div class="flex items-start gap-3">
++                                <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-100">
++                                    <svg class="h-5 w-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke-width="2"
++                                        stroke="currentColor">
++                                        <path stroke-linecap="round" stroke-linejoin="round"
++                                            d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
++                                    </svg>
++                                </div>
++                                <div>
++                                    <p class="font-semibold text-amber-800">Batas Waktu Pengisian</p>
++                                    <p class="mt-1 text-2xl font-bold text-amber-900">{{ $timeDisplay }}</p>
++                                    <p class="mt-1 text-xs text-amber-600">Timer akan mulai berjalan setelah Anda menekan tombol
++                                        "Mulai Sekarang"</p>
++                                </div>
++                            </div>
+                         </div>
+-                    </div>
+ 
+-                    {{-- Important notices --}}
+-                    <div class="space-y-2">
+-                        <div class="flex items-start gap-2">
+-                            <svg class="mt-0.5 h-4 w-4 shrink-0 text-red-500" fill="none" viewBox="0 0 24 24"
+-                                stroke-width="2" stroke="currentColor">
+-                                <path stroke-linecap="round" stroke-linejoin="round"
+-                                    d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+-                            </svg>
+-                            <p class="text-sm text-zinc-700">Jawaban akan <strong>otomatis dikirim</strong> saat waktu
+-                                habis.</p>
++                        {{-- Info cards --}}
++                        <div class="grid grid-cols-2 gap-3">
++                            <div class="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-center">
++                                <p class="text-2xl font-bold text-zinc-900">{{ $fillableCount }}</p>
++                                <p class="text-xs text-zinc-500">Kuisioner</p>
++                            </div>
++                            <div class="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-center">
++                                <p class="text-2xl font-bold text-zinc-900">{{ $totalQuestions }}</p>
++                                <p class="text-xs text-zinc-500">Total Pertanyaan</p>
++                            </div>
+                         </div>
+-                        <div class="flex items-start gap-2">
+-                            <svg class="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" fill="none" viewBox="0 0 24 24"
+-                                stroke-width="2" stroke="currentColor">
+-                                <path stroke-linecap="round" stroke-linejoin="round"
+-                                    d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+-                            </svg>
+-                            <p class="text-sm text-zinc-700">Isi semua pertanyaan wajib, lalu klik <strong>Kirim
+-                                    Semua</strong> untuk menyelesaikan.</p>
++
++                        {{-- Important notices --}}
++                        <div class="space-y-2">
++                            <div class="flex items-start gap-2">
++                                <svg class="mt-0.5 h-4 w-4 shrink-0 text-red-500" fill="none" viewBox="0 0 24 24"
++                                    stroke-width="2" stroke="currentColor">
++                                    <path stroke-linecap="round" stroke-linejoin="round"
++                                        d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
++                                </svg>
++                                <p class="text-sm text-zinc-700">Jawaban akan <strong>otomatis dikirim</strong> saat waktu
++                                    habis.</p>
++                            </div>
++                            <div class="flex items-start gap-2">
++                                <svg class="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" fill="none" viewBox="0 0 24 24"
++                                    stroke-width="2" stroke="currentColor">
++                                    <path stroke-linecap="round" stroke-linejoin="round"
++                                        d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
++                                </svg>
++                                <p class="text-sm text-zinc-700">Isi semua pertanyaan wajib, lalu klik <strong>Kirim
++                                        Semua</strong> untuk menyelesaikan.</p>
++                            </div>
+                         </div>
+                     </div>
+-                </div>
+-
+-                {{-- Footer buttons --}}
+-                <div class="flex gap-3 border-t border-zinc-100 bg-zinc-50 px-6 py-4">
+-                    <flux:button variant="outline" size="sm" wire:click="cancelStart" class="flex-1">
+-                        Batal
+-                    </flux:button>
+-                    <flux:button variant="primary" size="sm" wire:click="confirmStart" class="flex-1">
+-                        Mulai Sekarang
+-                    </flux:button>
+-                </div>
+-            </div>
+-        </div>
+-    @endif
+ 
+-    {{-- Time Expired Notice --}}
+-    @if ($timeExpired)
+-        {{-- Attractive expired popup --}}
+-        <div x-show="timeExpired" x-transition:enter="transition ease-out duration-300"
+-            x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100"
+-            class="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" style="display:none;">
+-            <div class="w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-2xl">
+-                <div class="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-red-100">
+-                    <svg class="h-8 w-8 text-red-600" fill="none" viewBox="0 0 24 24" stroke-width="2"
+-                        stroke="currentColor">
+-                        <path stroke-linecap="round" stroke-linejoin="round"
+-                            d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+-                    </svg>
+-                </div>
+-                <h3 class="text-lg font-bold text-red-700">Waktu Habis!</h3>
+-                <p class="mt-2 text-sm text-zinc-600">Batas waktu pengisian kuisioner telah berakhir.</p>
+-                <div class="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+-                    Jawaban yang sudah Anda isi telah <strong>disimpan dan dikirim</strong> secara otomatis.
++                    {{-- Footer buttons --}}
++                    <div class="flex gap-3 border-t border-zinc-100 bg-zinc-50 px-6 py-4">
++                        <flux:button variant="outline" size="sm" wire:click="cancelStart" class="flex-1">
++                            Batal
++                        </flux:button>
++                        <flux:button variant="primary" size="sm" wire:click="confirmStart" class="flex-1">
++                            Mulai Sekarang
++                        </flux:button>
++                    </div>
+                 </div>
+-                <p class="mt-3 text-xs text-zinc-400">Anda tidak dapat melanjutkan pengisian kuisioner.</p>
+             </div>
+-        </div>
+-    @endif
+-
+-    {{-- Already Submitted Notice --}}
+-    @if ($totalFillable === 0 && $submittedCount > 0)
+-        <div class="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4" x-data="{ show: false }"
+-            x-init="$nextTick(() => show = true)" x-show="show" x-transition:enter="transition ease-out duration-300"
+-            x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100"
+-            style="display:none;">
+-            <div class="w-full max-w-md rounded-2xl bg-white p-0 shadow-2xl overflow-hidden">
+-                {{-- Header with gradient --}}
+-                <div class="bg-gradient-to-r from-emerald-600 to-teal-600 px-6 py-5 text-white">
+-                    <div class="flex items-center gap-3">
+-                        <div
+-                            class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white/20 backdrop-blur-sm">
+-                            <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+-                                <path stroke-linecap="round" stroke-linejoin="round"
+-                                    d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+-                            </svg>
+-                        </div>
+-                        <div>
+-                            <h3 class="text-lg font-bold">Kuisioner Berhasil Dikirim!</h3>
+-                            <p class="text-sm text-emerald-100">Semua jawaban Anda telah tersimpan</p>
+-                        </div>
++        @endif
++
++        {{-- Time Expired Notice --}}
++        @if ($timeExpired)
++            {{-- Attractive expired popup --}}
++            <div x-show="timeExpired" x-transition:enter="transition ease-out duration-300"
++                x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100"
++                class="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" style="display:none;">
++                <div class="w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-2xl">
++                    <div class="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-red-100">
++                        <svg class="h-8 w-8 text-red-600" fill="none" viewBox="0 0 24 24" stroke-width="2"
++                            stroke="currentColor">
++                            <path stroke-linecap="round" stroke-linejoin="round"
++                                d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
++                        </svg>
++                    </div>
++                    <h3 class="text-lg font-bold text-red-700">Waktu Habis!</h3>
++                    <p class="mt-2 text-sm text-zinc-600">Batas waktu pengisian kuisioner telah berakhir.</p>
++                    <div class="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
++                        Jawaban yang sudah Anda isi telah <strong>disimpan dan dikirim</strong> secara otomatis.
+                     </div>
++                    <p class="mt-3 text-xs text-zinc-400">Anda tidak dapat melanjutkan pengisian kuisioner.</p>
+                 </div>
+-
+-                {{-- Body --}}
+-                <div class="px-6 py-5 space-y-4">
+-                    <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+-                        <div class="flex items-start gap-3">
+-                            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-100">
+-                                <svg class="h-5 w-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke-width="2"
+-                                    stroke="currentColor">
++            </div>
++        @endif
++
++        {{-- Already Submitted Notice --}}
++        @if ($totalFillable === 0 && $submittedCount > 0)
++            <div class="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4" x-data="{ show: false }"
++                x-init="$nextTick(() => show = true)" x-show="show" x-transition:enter="transition ease-out duration-300"
++                x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100"
++                style="display:none;">
++                <div class="w-full max-w-md rounded-2xl bg-white p-0 shadow-2xl overflow-hidden">
++                    {{-- Header with gradient --}}
++                    <div class="bg-gradient-to-r from-emerald-600 to-teal-600 px-6 py-5 text-white">
++                        <div class="flex items-center gap-3">
++                            <div
++                                class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white/20 backdrop-blur-sm">
++                                <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                                     <path stroke-linecap="round" stroke-linejoin="round"
+-                                        d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
++                                        d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                 </svg>
+                             </div>
+                             <div>
+-                                <p class="font-semibold text-emerald-800">Akses Terkunci</p>
+-                                <p class="mt-1 text-sm text-emerald-700">Kuisioner yang sudah dikirim <strong>tidak dapat
+-                                        diakses atau diubah lagi</strong>. Pastikan semua jawaban sudah benar sebelum
+-                                    mengirim.</p>
++                                <h3 class="text-lg font-bold">Kuisioner Berhasil Dikirim!</h3>
++                                <p class="text-sm text-emerald-100">Semua jawaban Anda telah tersimpan</p>
+                             </div>
+                         </div>
+                     </div>
+ 
+-                    <div class="text-center">
+-                        <p class="text-sm text-zinc-500">Total kuisioner terkirim: <strong
+-                                class="text-zinc-700">{{ $submittedCount }}</strong></p>
++                    {{-- Body --}}
++                    <div class="px-6 py-5 space-y-4">
++                        <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
++                            <div class="flex items-start gap-3">
++                                <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-100">
++                                    <svg class="h-5 w-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke-width="2"
++                                        stroke="currentColor">
++                                        <path stroke-linecap="round" stroke-linejoin="round"
++                                            d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
++                                    </svg>
++                                </div>
++                                <div>
++                                    <p class="font-semibold text-emerald-800">Akses Terkunci</p>
++                                    <p class="mt-1 text-sm text-emerald-700">Kuisioner yang sudah dikirim <strong>tidak dapat
++                                            diakses atau diubah lagi</strong>. Pastikan semua jawaban sudah benar sebelum
++                                        mengirim.</p>
++                                </div>
++                            </div>
++                        </div>
++
++                        <div class="text-center">
++                            <p class="text-sm text-zinc-500">Total kuisioner terkirim: <strong
++                                    class="text-zinc-700">{{ $submittedCount }}</strong></p>
++                        </div>
+                     </div>
+-                </div>
+ 
+-                {{-- Footer --}}
+-                <div class="border-t border-zinc-100 bg-zinc-50 px-6 py-4">
+-                    {{-- <a href="{{ route('role.dashboard') }}" wire:navigate>
+-                        <flux:button variant="primary" class="w-full">Kembali ke Dashboard</flux:button>
+-                    </a> --}}
+-                    <a href="/fill/dashboard/guru" wire:navigate>
+-                        <flux:button variant="primary" class="w-full">Kembali ke Dashboard</flux:button>
+-                    </a>
++                    {{-- Footer --}}
++                    <div class="border-t border-zinc-100 bg-zinc-50 px-6 py-4">
++                        {{-- <a href="{{ route('role.dashboard') }}" wire:navigate>
++                            <flux:button variant="primary" class="w-full">Kembali ke Dashboard</flux:button>
++                        </a> --}}
++                        <a href="/fill/dashboard/guru" wire:navigate>
++                            <flux:button variant="primary" class="w-full">Kembali ke Dashboard</flux:button>
++                        </a>
++                    </div>
+                 </div>
+             </div>
+-        </div>
+-    @endif
++        @endif
++
++        {{-- Step Navigation & Progress --}}
++        @if ($totalFillable > 0 && !$showStartConfirmation)
++            <div class="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
++                {{-- Questionnaire step dots --}}
++                <div class="flex items-center gap-2 overflow-x-auto pb-1">
++                    @for ($i = 0; $i < $totalFillable; $i++)
++                        @php
++                            $stepId = $questionnaireIds[$i] ?? null;
++                            $stepMeta = $stepId !== null ? ($questionnaireMeta[$stepId] ?? null) : null;
++                            $stepTitle = $stepMeta ? $stepMeta['title'] : '';
++                            $isCurrent = $i === $currentIndex;
++                            $isVisited = $i < $currentIndex;
++                        @endphp
++                        <button type="button" @click="validateBeforeGoTo({{ $i }})"
++                            class="flex shrink-0 items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition {{ $isCurrent ? 'border-zinc-900 bg-zinc-900 text-white' : ($isVisited ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50') }}"
++                            :disabled="timeExpired">
++                            @if ($isVisited)
++                                <span class="text-emerald-600">&#10003;</span>
++                            @else
++                                <span
++                                    class="flex h-5 w-5 items-center justify-center rounded-full {{ $isCurrent ? 'bg-white text-zinc-900' : 'bg-zinc-200 text-zinc-600' }} text-xs font-bold">
++                                    {{ $i + 1 }}
++                                </span>
++                            @endif
++                            <span class="max-w-[120px] truncate">{{ $stepTitle }}</span>
++                        </button>
++                    @endfor
++                </div>
+ 
+-    {{-- Step Navigation & Progress --}}
+-    @if ($totalFillable > 0 && !$showStartConfirmation)
+-        <div class="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+-            {{-- Questionnaire step dots --}}
+-            <div class="flex items-center gap-2 overflow-x-auto pb-1">
+-                @for ($i = 0; $i < $totalFillable; $i++)
+-                    @php
+-                        $stepId = $questionnaireIds[$i] ?? null;
+-                        $stepMeta = $stepId !== null ? ($questionnaireMeta[$stepId] ?? null) : null;
+-                        $stepTitle = $stepMeta ? $stepMeta['title'] : '';
+-                        $isCurrent = $i === $currentIndex;
+-                        $isVisited = $i < $currentIndex;
+-                    @endphp
+-                    <button type="button" @click="validateBeforeGoTo({{ $i }})"
+-                        class="flex shrink-0 items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition {{ $isCurrent ? 'border-zinc-900 bg-zinc-900 text-white' : ($isVisited ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50') }}"
+-                        :disabled="timeExpired">
+-                        @if ($isVisited)
+-                            <span class="text-emerald-600">&#10003;</span>
+-                        @else
+-                            <span
+-                                class="flex h-5 w-5 items-center justify-center rounded-full {{ $isCurrent ? 'bg-white text-zinc-900' : 'bg-zinc-200 text-zinc-600' }} text-xs font-bold">
+-                                {{ $i + 1 }}
+-                            </span>
+-                        @endif
+-                        <span class="max-w-[120px] truncate">{{ $stepTitle }}</span>
+-                    </button>
+-                @endfor
++                {{-- Overall Progress --}}
++                <div class="mt-3 flex items-center justify-between gap-4">
++                    <p class="text-xs text-zinc-500">
++                        Kuisioner {{ $currentIndex + 1 }} dari {{ $totalFillable }}
++                        &middot; {{ $answeredCount }}/{{ $totalQuestions }} pertanyaan terisi
++                        &middot; Wajib: {{ $answeredRequiredCount }}/{{ $requiredQuestionCount }}
++                    </p>
++                    <span
++                        class="text-sm font-bold {{ $progressPercent >= 100 ? 'text-emerald-600' : 'text-zinc-900' }}">{{ $progressPercent }}%</span>
++                </div>
++                <div class="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-zinc-200">
++                    <div class="h-full rounded-full transition-all duration-300 {{ $progressPercent >= 100 ? 'bg-emerald-600' : 'bg-zinc-800' }}"
++                        style="width: {{ $progressPercent }}%;"></div>
++                </div>
+             </div>
++        @endif
+ 
+-            {{-- Overall Progress --}}
+-            <div class="mt-3 flex items-center justify-between gap-4">
+-                <p class="text-xs text-zinc-500">
+-                    Kuisioner {{ $currentIndex + 1 }} dari {{ $totalFillable }}
+-                    &middot; {{ $answeredCount }}/{{ $totalQuestions }} pertanyaan terisi
+-                    &middot; Wajib: {{ $answeredRequiredCount }}/{{ $requiredQuestionCount }}
+-                </p>
+-                <span
+-                    class="text-sm font-bold {{ $progressPercent >= 100 ? 'text-emerald-600' : 'text-zinc-900' }}">{{ $progressPercent }}%</span>
+-            </div>
+-            <div class="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-zinc-200">
+-                <div class="h-full rounded-full transition-all duration-300 {{ $progressPercent >= 100 ? 'bg-emerald-600' : 'bg-zinc-800' }}"
+-                    style="width: {{ $progressPercent }}%;"></div>
+-            </div>
++        {{-- Global Validation Errors Panel --}}
++        <div id="global-validation-errors" x-show="validationErrors.length > 0" x-transition.opacity.duration.200ms
++            class="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700" style="display:none;">
++            <p class="font-semibold" x-text="validationErrors[0]"></p>
+         </div>
+-    @endif
+ 
+-    {{-- Global Validation Errors Panel --}}
+-    <div id="global-validation-errors" x-show="validationErrors.length > 0" x-transition.opacity.duration.200ms
+-        class="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700" style="display:none;">
+-        <p class="font-semibold" x-text="validationErrors[0]"></p>
+-    </div>
+-
+-    {{-- Current Questionnaire Content --}}
+-    @if ($currentMeta)
+-        <section class="space-y-4">
+-            {{-- Questionnaire Header --}}
+-            <div class="rounded-xl border border-zinc-200 bg-white shadow-sm">
+-                <div class="border-b border-zinc-100 p-4">
+-                    <div class="flex items-start justify-between gap-2">
+-                        <div>
+-                            <div class="mb-1 flex items-center gap-2">
+-                                <span
+-                                    class="rounded bg-zinc-900 px-2 py-0.5 text-xs font-bold text-white">{{ $currentIndex + 1 }}</span>
+-                                <span class="text-xs text-zinc-500">{{ $currentMeta['target_label'] }}</span>
++        {{-- Current Questionnaire Content --}}
++        @if ($currentMeta)
++            <section class="space-y-4">
++                {{-- Questionnaire Header --}}
++                <div class="rounded-xl border border-zinc-200 bg-white shadow-sm">
++                    <div class="border-b border-zinc-100 p-4">
++                        <div class="flex items-start justify-between gap-2">
++                            <div>
++                                <div class="mb-1 flex items-center gap-2">
++                                    <span
++                                        class="rounded bg-zinc-900 px-2 py-0.5 text-xs font-bold text-white">{{ $currentIndex + 1 }}</span>
++                                    <span class="text-xs text-zinc-500">{{ $currentMeta['target_label'] }}</span>
++                                </div>
++                                <h3 class="text-lg font-semibold text-zinc-900">{{ $currentMeta['title'] }}</h3>
++                                @if ($currentMeta['description'])
++                                    <p class="mt-1 text-sm text-zinc-600">{{ $currentMeta['description'] }}</p>
++                                @endif
+                             </div>
+-                            <h3 class="text-lg font-semibold text-zinc-900">{{ $currentMeta['title'] }}</h3>
+-                            @if ($currentMeta['description'])
+-                                <p class="mt-1 text-sm text-zinc-600">{{ $currentMeta['description'] }}</p>
+-                            @endif
++                            <span class="shrink-0 rounded-full bg-amber-100 px-2 py-1 text-xs font-medium text-amber-700">Perlu
++                                Diisi</span>
+                         </div>
+-                        <span class="shrink-0 rounded-full bg-amber-100 px-2 py-1 text-xs font-medium text-amber-700">Perlu
+-                            Diisi</span>
+                     </div>
+-                </div>
+-
+-                {{-- Questions --}}
+-                @if ($currentQuestions->count() > 0)
+-                    <div class="space-y-4 p-4">
+-                        @foreach ($currentQuestions as $index => $question)
+-                            @php
+-                                $isRequiredQuestion = $question->is_required;
+-                            @endphp
+-                            <section id="q-{{ $question->id }}" wire:key="q-{{ $question->id }}" data-question-block
+-                                data-question-id="{{ $question->id }}" data-question-number="{{ $index + 1 }}"
+-                                data-question-label="{{ trim($question->question_text) }}"
+-                                data-question-type="{{ $question->type }}" data-questionnaire-title="{{ $currentMeta['title'] }}"
+-                                data-required="{{ $isRequiredQuestion ? '1' : '0' }}"
+-                                x-on:input="invalidQuestionIds = invalidQuestionIds.filter(v => v !== {{ $question->id }}); $nextTick(() => checkNextButton())"
+-                                x-on:change="invalidQuestionIds = invalidQuestionIds.filter(v => v !== {{ $question->id }}); invalidEssayQuestionIds = invalidEssayQuestionIds.filter(v => v !== {{ $question->id }}); $nextTick(() => checkNextButton())"
+-                                :class="invalidQuestionIds.includes({{ $question->id }}) ? 'ring-2 ring-rose-400 bg-rose-50/60' : ''"
+-                                class="space-y-3 rounded-lg border border-zinc-200 bg-white p-4 transition">
+-                                <div class="flex items-center gap-2">
+-                                    <span class="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+-                                        Pertanyaan {{ $index + 1 }}
+-                                    </span>
+-                                    <span class="text-xs text-zinc-400">|</span>
+-                                    <span class="text-xs text-zinc-500">{{ $question->type }}</span>
+-                                    @if ($isRequiredQuestion)
+-                                        <span class="rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-700">Wajib</span>
+-                                    @else
+-                                        <span class="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-500">Opsional</span>
+-                                    @endif
+-                                </div>
+ 
+-                                <h3 class="text-sm font-semibold text-zinc-900">{{ $question->question_text }}</h3>
+-
+-                                {{-- Single Choice --}}
+-                                @if ($question->type === 'single_choice')
+-                                    <div class="space-y-2" :class="timeExpired ? 'pointer-events-none opacity-50' : ''">
+-                                        @foreach ($question->answerOptions as $option)
+-                                            <label class="flex cursor-pointer items-start gap-2 text-sm text-zinc-700">
+-                                                <input type="radio" wire:model.live="answers.{{ $question->id }}.answer_option_id"
+-                                                    name="question_{{ $question->id }}" value="{{ $option->id }}"
+-                                                    class="mt-0.5 border-zinc-300" :disabled="timeExpired">
+-                                                <span>{{ $option->option_text }}</span>
+-                                            </label>
+-                                        @endforeach
+-                                        @error("answers.$question->id.answer_option_id")
+-                                            <p class="text-xs text-red-600">{{ $message }}</p>
+-                                        @enderror
++                    {{-- Questions --}}
++                    @if ($currentQuestions->count() > 0)
++                        <div class="space-y-4 p-4">
++                            @foreach ($currentQuestions as $index => $question)
++                                @php
++                                    $isRequiredQuestion = $question->is_required;
++                                @endphp
++                                <section id="q-{{ $question->id }}" wire:key="q-{{ $question->id }}" data-question-block
++                                    data-question-id="{{ $question->id }}" data-question-number="{{ $index + 1 }}"
++                                    data-question-label="{{ trim($question->question_text) }}"
++                                    data-question-type="{{ $question->type }}" data-questionnaire-title="{{ $currentMeta['title'] }}"
++                                    data-required="{{ $isRequiredQuestion ? '1' : '0' }}"
++                                    x-on:input="invalidQuestionIds = invalidQuestionIds.filter(v => v !== {{ $question->id }}); $nextTick(() => checkNextButton())"
++                                    x-on:change="invalidQuestionIds = invalidQuestionIds.filter(v => v !== {{ $question->id }}); invalidEssayQuestionIds = invalidEssayQuestionIds.filter(v => v !== {{ $question->id }}); $nextTick(() => checkNextButton())"
++                                    :class="invalidQuestionIds.includes({{ $question->id }}) ? 'ring-2 ring-rose-400 bg-rose-50/60' : ''"
++                                    class="space-y-3 rounded-lg border border-zinc-200 bg-white p-4 transition">
++                                    <div class="flex items-center gap-2">
++                                        <span class="text-xs font-semibold uppercase tracking-wide text-zinc-500">
++                                            Pertanyaan {{ $index + 1 }}
++                                        </span>
++                                        <span class="text-xs text-zinc-400">|</span>
++                                        <span class="text-xs text-zinc-500">{{ $question->type }}</span>
++                                        @if ($isRequiredQuestion)
++                                            <span class="rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-700">Wajib</span>
++                                        @else
++                                            <span class="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-500">Opsional</span>
++                                        @endif
+                                     </div>
+-                                @endif
+ 
+-                                {{-- Essay --}}
+-                                @if ($question->type === 'essay')
+-                                    <div class="space-y-2" :class="timeExpired ? 'pointer-events-none opacity-50' : ''">
+-                                        <textarea data-essay-input
+-                                            wire:model.live.debounce.250ms="answers.{{ $question->id }}.essay_answer" rows="3"
+-                                            maxlength="2000"
+-                                            class="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none"
+-                                            placeholder="Tulis jawaban Anda..." :disabled="timeExpired"
+-                                            x-on:input="if (String($el.value || '').trim() !== '') { invalidEssayQuestionIds = invalidEssayQuestionIds.filter(v => v !== {{ $question->id }}); invalidQuestionIds = invalidQuestionIds.filter(v => v !== {{ $question->id }}) }; $nextTick(() => checkNextButton())"></textarea>
+-                                        <div class="text-xs text-zinc-500">
+-                                            {{ strlen($answers[$question->id]['essay_answer'] ?? '') }} / 2000 karakter
+-                                        </div>
+-                                        <p x-show="invalidEssayQuestionIds.includes({{ $question->id }})" class="text-xs text-rose-700"
+-                                            style="display:none;">
+-                                            Jawaban untuk pertanyaan esai ini masih kosong. Silakan isi terlebih dahulu.
+-                                        </p>
+-                                        @error("answers.$question->id.essay_answer")
+-                                            <p class="text-xs text-red-600">{{ $message }}</p>
+-                                        @enderror
+-                                    </div>
+-                                @endif
++                                    <h3 class="text-sm font-semibold text-zinc-900">{{ $question->question_text }}</h3>
+ 
+-                                {{-- Combined --}}
+-                                @if ($question->type === 'combined')
+-                                    <div class="space-y-3" :class="timeExpired ? 'pointer-events-none opacity-50' : ''">
+-                                        <div class="space-y-2">
++                                    {{-- Single Choice --}}
++                                    @if ($question->type === 'single_choice')
++                                        <div class="space-y-2" :class="timeExpired ? 'pointer-events-none opacity-50' : ''">
+                                             @foreach ($question->answerOptions as $option)
+                                                 <label class="flex cursor-pointer items-start gap-2 text-sm text-zinc-700">
+                                                     <input type="radio" wire:model.live="answers.{{ $question->id }}.answer_option_id"
+-                                                        name="question_combined_{{ $question->id }}" value="{{ $option->id }}"
++                                                        name="question_{{ $question->id }}" value="{{ $option->id }}"
+                                                         class="mt-0.5 border-zinc-300" :disabled="timeExpired">
+                                                     <span>{{ $option->option_text }}</span>
+                                                 </label>
+@@ -669,133 +709,174 @@ class="mt-0.5 border-zinc-300" :disabled="timeExpired">
+                                                 <p class="text-xs text-red-600">{{ $message }}</p>
+                                             @enderror
+                                         </div>
++                                    @endif
++
++                                    {{-- Essay --}}
++                                    @if ($question->type === 'essay')
++                                        <div class="space-y-2" :class="timeExpired ? 'pointer-events-none opacity-50' : ''">
++                                            <textarea data-essay-input
++                                                wire:model.live.debounce.250ms="answers.{{ $question->id }}.essay_answer" rows="3"
++                                                maxlength="2000"
++                                                class="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none"
++                                                placeholder="Tulis jawaban Anda..." :disabled="timeExpired"
++                                                x-on:input="if (String($el.value || '').trim() !== '') { invalidEssayQuestionIds = invalidEssayQuestionIds.filter(v => v !== {{ $question->id }}); invalidQuestionIds = invalidQuestionIds.filter(v => v !== {{ $question->id }}) }; $nextTick(() => checkNextButton())"></textarea>
++                                            <div class="text-xs text-zinc-500">
++                                                {{ strlen($answers[$question->id]['essay_answer'] ?? '') }} / 2000 karakter
++                                            </div>
++                                            <p x-show="invalidEssayQuestionIds.includes({{ $question->id }})" class="text-xs text-rose-700"
++                                                style="display:none;">
++                                                Jawaban untuk pertanyaan esai ini masih kosong. Silakan isi terlebih dahulu.
++                                            </p>
++                                            @error("answers.$question->id.essay_answer")
++                                                <p class="text-xs text-red-600">{{ $message }}</p>
++                                            @enderror
++                                        </div>
++                                    @endif
+ 
+-                                        @if (($answers[$question->id]['answer_option_id'] ?? null) !== null)
++                                    {{-- Combined --}}
++                                    @if ($question->type === 'combined')
++                                        <div class="space-y-3" :class="timeExpired ? 'pointer-events-none opacity-50' : ''">
+                                             <div class="space-y-2">
+-                                                <textarea wire:model.live.debounce.250ms="answers.{{ $question->id }}.essay_answer" rows="3"
+-                                                    maxlength="2000"
+-                                                    class="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none"
+-                                                    placeholder="Tuliskan alasan Anda..." :disabled="timeExpired"></textarea>
+-                                                <div class="text-xs text-zinc-500">
+-                                                    {{ strlen($answers[$question->id]['essay_answer'] ?? '') }} / 2000 karakter
+-                                                </div>
+-                                                @error("answers.$question->id.essay_answer")
++                                                @foreach ($question->answerOptions as $option)
++                                                    <label class="flex cursor-pointer items-start gap-2 text-sm text-zinc-700">
++                                                        <input type="radio" wire:model.live="answers.{{ $question->id }}.answer_option_id"
++                                                            name="question_combined_{{ $question->id }}" value="{{ $option->id }}"
++                                                            class="mt-0.5 border-zinc-300" :disabled="timeExpired">
++                                                        <span>{{ $option->option_text }}</span>
++                                                    </label>
++                                                @endforeach
++                                                @error("answers.$question->id.answer_option_id")
+                                                     <p class="text-xs text-red-600">{{ $message }}</p>
+                                                 @enderror
+                                             </div>
+-                                        @else
+-                                            <p class="text-xs text-zinc-500">Pilih opsi jawaban terlebih dahulu untuk menampilkan area
+-                                                alasan.</p>
+-                                        @endif
+-                                    </div>
+-                                @endif
+-                            </section>
+-                        @endforeach
+-                    </div>
+-                @else
+-                    <div class="p-4 text-sm text-zinc-500">
+-                        Tidak ada pertanyaan pada kuisioner ini.
+-                    </div>
+-                @endif
+-            </div>
+-        </section>
+-    @elseif ($totalFillable === 0 && $submittedCount === 0)
+-        <div class="rounded-xl border border-zinc-200 bg-white p-6 text-center text-sm text-zinc-500">
+-            Tidak ada kuisioner aktif untuk role Anda saat ini.
+-        </div>
+-    @endif
+ 
+-    {{-- Navigation & Submit Bar --}}
+-    @if ($totalFillable > 0 && !$timeExpired && !$showStartConfirmation)
+-        <div class="sticky bottom-4 z-40 rounded-xl border border-zinc-200 bg-white p-4 shadow-lg">
+-            <div class="flex items-center justify-between gap-4">
+-                {{-- Back Button --}}
+-                <div>
+-                    {{-- Back button hidden --}}
++                                            @if (($answers[$question->id]['answer_option_id'] ?? null) !== null)
++                                                <div class="space-y-2">
++                                                    <textarea wire:model.live.debounce.250ms="answers.{{ $question->id }}.essay_answer" rows="3"
++                                                        maxlength="2000"
++                                                        class="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none"
++                                                        placeholder="Tuliskan alasan Anda..." :disabled="timeExpired"></textarea>
++                                                    <div class="text-xs text-zinc-500">
++                                                        {{ strlen($answers[$question->id]['essay_answer'] ?? '') }} / 2000 karakter
++                                                    </div>
++                                                    @error("answers.$question->id.essay_answer")
++                                                        <p class="text-xs text-red-600">{{ $message }}</p>
++                                                    @enderror
++                                                </div>
++                                            @else
++                                                <p class="text-xs text-zinc-500">Pilih opsi jawaban terlebih dahulu untuk menampilkan area
++                                                    alasan.</p>
++                                            @endif
++                                        </div>
++                                    @endif
++                                </section>
++                            @endforeach
++                        </div>
++                    @else
++                        <div class="p-4 text-sm text-zinc-500">
++                            Tidak ada pertanyaan pada kuisioner ini.
++                        </div>
++                    @endif
+                 </div>
++            </section>
++        @elseif ($totalFillable === 0 && $submittedCount === 0)
++            <div class="rounded-xl border border-zinc-200 bg-white p-6 text-center text-sm text-zinc-500">
++                Tidak ada kuisioner aktif untuk role Anda saat ini.
++            </div>
++        @endif
++
++        {{-- Navigation & Submit Bar --}}
++        @if ($totalFillable > 0 && !$timeExpired && !$showStartConfirmation)
++            <div class="sticky bottom-4 z-40 rounded-xl border border-zinc-200 bg-white p-4 shadow-lg">
++                <div class="flex items-center justify-between gap-4">
++                    {{-- Back Button --}}
++                    <div>
++                        {{-- Back button hidden --}}
++                    </div>
+ 
+-                {{-- Center: Timer Display --}}
+-                <div x-show="!timeExpired && hasTimeLimit" x-cloak class="flex items-center gap-2">
+-                    <div class="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-bold shadow-sm"
+-                        :class="remainingSeconds <= 300 ? 'bg-red-100 text-red-700 ring-2 ring-red-300 animate-pulse' : (remainingSeconds <= 600 ? 'bg-amber-100 text-amber-700 ring-1 ring-amber-300' : 'bg-zinc-100 text-zinc-700 ring-1 ring-zinc-200')">
+-                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+-                            <path stroke-linecap="round" stroke-linejoin="round"
+-                                d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+-                        </svg>
+-                        <span x-text="formatTime(remainingSeconds)"></span>
++                    {{-- Center: Timer Display --}}
++                    <div x-show="!timeExpired && hasTimeLimit" x-cloak class="flex items-center gap-2">
++                        <div class="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-bold shadow-sm"
++                            :class="remainingSeconds <= 300 ? 'bg-red-100 text-red-700 ring-2 ring-red-300 animate-pulse' : (remainingSeconds <= 600 ? 'bg-amber-100 text-amber-700 ring-1 ring-amber-300' : 'bg-zinc-100 text-zinc-700 ring-1 ring-zinc-200')">
++                            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
++                                <path stroke-linecap="round" stroke-linejoin="round"
++                                    d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
++                            </svg>
++                            <span x-text="formatTime(remainingSeconds)"></span>
++                        </div>
+                     </div>
+-                </div>
+ 
+-                {{-- Right side: Save Draft + Next/Submit --}}
+-                <div class="flex items-center gap-2">
+-                    @if ($lastDraftSavedAt)
+-                        <span class="text-xs text-zinc-400">Draft tersimpan {{ $lastDraftSavedAt }}</span>
+-                    @endif
+-                    {{-- Simpan Draft button hidden --}}
++                    {{-- Right side: Save Draft + Next/Submit --}}
++                    <div class="flex items-center gap-2">
++                        @if ($lastDraftSavedAt)
++                            <span class="text-xs text-zinc-400">Draft tersimpan {{ $lastDraftSavedAt }}</span>
++                        @endif
++                        {{-- Simpan Draft button hidden --}}
+ 
+-                    @if ($isLast)
+-                        <flux:button variant="primary" x-on:click.prevent="validateBeforeSubmitAll()"
+-                            :disabled="$totalQuestions === 0">
+-                            Submit Semua
+-                        </flux:button>
+-                    @else
+-                        <flux:button variant="primary" icon="arrow-right" @click="validateBeforeNext()">
+-                            Selanjutnya
+-                        </flux:button>
+-                    @endif
++                        @if ($isLast)
++                            <flux:button variant="primary" x-on:click.prevent="validateBeforeSubmitAll()"
++                                :disabled="$totalQuestions === 0">
++                                Submit Semua
++                            </flux:button>
++                        @else
++                            <flux:button variant="primary" icon="arrow-right" @click="validateBeforeNext()">
++                                Selanjutnya
++                            </flux:button>
++                        @endif
++                    </div>
+                 </div>
+             </div>
+-        </div>
+-    @endif
+-
+-    {{-- Submit All Confirmation Modal --}}
+-    @if ($confirmSubmitAll)
+-        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+-            <div class="w-full max-w-md rounded-xl border border-zinc-200 bg-white p-5 shadow-xl">
+-                <h3 class="text-base font-semibold text-zinc-900">Konfirmasi Submit Semua</h3>
+-                <p class="mt-2 text-sm text-zinc-600">
+-                    Pastikan jawaban sudah benar. Setelah submit, Anda <strong>tidak dapat mengakses atau mengubah</strong>
+-                    kuisioner lagi.
+-                </p>
+-
+-                <div class="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+-                    <div class="flex items-start gap-2">
+-                        <svg class="mt-0.5 h-4 w-4 shrink-0 text-amber-600" fill="none" viewBox="0 0 24 24" stroke-width="2"
+-                            stroke="currentColor">
+-                            <path stroke-linecap="round" stroke-linejoin="round"
+-                                d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+-                        </svg>
+-                        <span><strong>Perhatian:</strong> Tindakan ini tidak dapat dibatalkan!</span>
++        @endif
++
++        {{-- Submit All Confirmation Modal --}}
++        @if ($confirmSubmitAll)
++            <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
++                <div class="w-full max-w-md rounded-xl border border-zinc-200 bg-white p-5 shadow-xl">
++                    <h3 class="text-base font-semibold text-zinc-900">Konfirmasi Submit Semua</h3>
++                    <p class="mt-2 text-sm text-zinc-600">
++                        Pastikan jawaban sudah benar. Setelah submit, Anda <strong>tidak dapat mengakses atau mengubah</strong>
++                        kuisioner lagi.
++                    </p>
++
++                    <div class="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
++                        <div class="flex items-start gap-2">
++                            <svg class="mt-0.5 h-4 w-4 shrink-0 text-amber-600" fill="none" viewBox="0 0 24 24" stroke-width="2"
++                                stroke="currentColor">
++                                <path stroke-linecap="round" stroke-linejoin="round"
++                                    d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
++                            </svg>
++                            <span><strong>Perhatian:</strong> Tindakan ini tidak dapat dibatalkan!</span>
++                        </div>
+                     </div>
+-                </div>
+ 
+-                <div class="mt-3 rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-700">
+-                    <div>Total kuisioner: {{ $totalFillable }}</div>
+-                    <div>Total pertanyaan: {{ $totalQuestions }}</div>
+-                    <div>Jawaban terisi: {{ $answeredCount }}</div>
+-                    <div>Wajib terisi: {{ $answeredRequiredCount }} / {{ $requiredQuestionCount }}</div>
+-                </div>
++                    <div class="mt-3 rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-700">
++                        <div>Total kuisioner: {{ $totalFillable }}</div>
++                        <div>Total pertanyaan: {{ $totalQuestions }}</div>
++                        <div>Jawaban terisi: {{ $answeredCount }}</div>
++                        <div>Wajib terisi: {{ $answeredRequiredCount }} / {{ $requiredQuestionCount }}</div>
++                    </div>
+ 
+-                <div class="mt-4 flex justify-end gap-2">
+-                    <flux:button variant="ghost" wire:click="closeSubmitAllConfirmation">Batal</flux:button>
+-                    <flux:button variant="primary" wire:click="submitAllFinal">Ya, Submit Semua</flux:button>
++                    <div class="mt-4 flex justify-end gap-2">
++                        <flux:button variant="ghost" wire:click="closeSubmitAllConfirmation">Batal</flux:button>
++                        <flux:button variant="primary" wire:click="submitAllFinal">Ya, Submit Semua</flux:button>
++                    </div>
+                 </div>
+             </div>
++        @endif
++
++        {{-- Toast Notification --}}
++        <div x-show="showToast" x-transition:enter="transition ease-out duration-300"
++            x-transition:enter-start="opacity-0 -translate-y-3" x-transition:enter-end="opacity-100 translate-y-0"
++            x-transition:leave="transition ease-in duration-200" x-transition:leave-start="opacity-100 translate-y-0"
++            x-transition:leave-end="opacity-0 -translate-y-3"
++            class="fixed top-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-xl px-5 py-3.5 text-sm font-semibold text-white shadow-2xl ring-1 ring-white/10"
++            :class="toastType === 'success' ? 'bg-emerald-600' : (toastType === 'error' ? 'bg-red-600' : 'bg-sky-700')"
++            role="alert" aria-live="assertive" aria-atomic="true" style="display: none;">
++            <span x-show="toastType === 'success'" aria-hidden="true" class="text-lg">&#10003;</span>
++            <span x-show="toastType === 'error'" aria-hidden="true" class="text-lg">&#9888;</span>
++            <span x-show="toastType !== 'success' && toastType !== 'error'" aria-hidden="true"
++                class="text-lg">&#8635;</span>
++            <span x-text="toastMessage"></span>
+         </div>
+     @endif
+-
+-    {{-- Toast Notification --}}
+-    <div x-show="showToast" x-transition:enter="transition ease-out duration-300"
+-        x-transition:enter-start="opacity-0 -translate-y-3" x-transition:enter-end="opacity-100 translate-y-0"
+-        x-transition:leave="transition ease-in duration-200" x-transition:leave-start="opacity-100 translate-y-0"
+-        x-transition:leave-end="opacity-0 -translate-y-3"
+-        class="fixed top-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-xl px-5 py-3.5 text-sm font-semibold text-white shadow-2xl ring-1 ring-white/10"
+-        :class="toastType === 'success' ? 'bg-emerald-600' : (toastType === 'error' ? 'bg-red-600' : 'bg-sky-700')"
+-        role="alert" aria-live="assertive" aria-atomic="true" style="display: none;">
+-        <span x-show="toastType === 'success'" aria-hidden="true" class="text-lg">&#10003;</span>
+-        <span x-show="toastType === 'error'" aria-hidden="true" class="text-lg">&#9888;</span>
+-        <span x-show="toastType !== 'success' && toastType !== 'error'" aria-hidden="true"
+-            class="text-lg">&#8635;</span>
+-        <span x-text="toastMessage"></span>
+-    </div>
+ </div>
+\ No newline at end of file

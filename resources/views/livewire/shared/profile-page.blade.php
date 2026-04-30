@@ -10,8 +10,8 @@
             <p class="mt-1 text-sm font-medium text-zinc-900">{{ auth()->user()?->name ?? '-' }}</p>
         </div>
         <div class="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
-            <p class="text-xs uppercase tracking-wide text-zinc-500">Email</p>
-            <p class="mt-1 text-sm font-medium text-zinc-900">{{ auth()->user()?->email ?? '-' }}</p>
+            <p class="text-xs uppercase tracking-wide text-zinc-500">Nomor Telepon</p>
+            <p class="mt-1 text-sm font-medium text-zinc-900">{{ auth()->user()?->phone_number ?? '-' }}</p>
         </div>
         <div class="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
             <p class="text-xs uppercase tracking-wide text-zinc-500">Role</p>

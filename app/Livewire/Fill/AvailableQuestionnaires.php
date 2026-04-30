@@ -9,6 +9,7 @@ use App\Models\Response;
 use App\Services\QuestionnaireScorer;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Livewire\Attributes\Layout;
@@ -59,8 +60,35 @@ class AvailableQuestionnaires extends Component
     /** 0-based index into questionnaireIds (the fillable list) */
     public int $currentIndex = 0;
 
+    public ?int $selectedTargetDepartmentId = null;
+
+    public bool $showDepartmentPicker = false;
+
+    /** @var Collection<int, \App\Models\Departement>|array<int, \App\Models\Departement> */
+    public Collection|array $evaluableDepartments = [];
+
+    /** @var list<int> */
+    public array $completedTargetDepartmentIds = [];
+
     public function mount(): void
     {
+        $user = Auth::user();
+
+        $evalDepts = $user?->evaluableDepartments()->orderBy('urut')->get() ?? collect();
+
+        if ($evalDepts->count() > 1) {
+            $this->evaluableDepartments = $evalDepts;
+            $this->showDepartmentPicker = true;
+            $this->loadCompletedDepartments();
+            return;
+        } elseif ($evalDepts->count() === 1) {
+            $this->selectedTargetDepartmentId = $evalDepts->first()->id;
+            $this->showDepartmentPicker = false;
+        } else {
+            $this->selectedTargetDepartmentId = null;
+            $this->showDepartmentPicker = false;
+        }
+
         $this->loadQuestionnaires();
         $this->initializeSessionTimer();
         $this->checkTimeExpiry();
@@ -289,6 +317,81 @@ class AvailableQuestionnaires extends Component
         $this->doSubmitAll(true);
     }
 
+    public function loadCompletedDepartments(): void
+    {
+        $user = Auth::user();
+        $roleSlug = $user?->roleSlug() ?? '';
+        $targetAliases = (array) config('rbac.questionnaire_target_aliases', []);
+        $targetGroups = array_values(array_unique(array_filter([
+            $roleSlug,
+            (string) ($targetAliases[$roleSlug] ?? ''),
+        ])));
+
+        $targetedQuestionnaireIds = Questionnaire::where('status', 'active')
+            ->whereHas('targets', function ($q) use ($targetGroups) {
+                $q->whereIn('target_group', $targetGroups);
+            })
+            ->pluck('id');
+
+        $this->completedTargetDepartmentIds = [];
+
+        foreach ($this->evaluableDepartments as $dept) {
+            $submittedCount = Response::where('user_id', $user?->id)
+                ->where('target_department_id', $dept->id)
+                ->where('status', 'submitted')
+                ->whereIn('questionnaire_id', $targetedQuestionnaireIds)
+                ->count();
+
+            if ($submittedCount >= $targetedQuestionnaireIds->count() && $targetedQuestionnaireIds->count() > 0) {
+                $this->completedTargetDepartmentIds[] = $dept->id;
+            }
+        }
+    }
+
+    public function selectTargetDepartment(int $departmentId): void
+    {
+        $user = auth()->user();
+
+        // Server-side authorization: verify user is allowed to evaluate this department
+        if ($user && $user->evaluableDepartments()->exists()) {
+            $isAllowed = $user->evaluableDepartments()->whereKey($departmentId)->exists();
+            if (!$isAllowed) {
+                abort(403, 'Anda tidak diizinkan mengevaluasi department ini.');
+            }
+        }
+
+        $this->selectedTargetDepartmentId = $departmentId;
+        $this->showDepartmentPicker = false;
+
+        $this->loadQuestionnaires();
+        $this->initializeSessionTimer();
+        $this->checkTimeExpiry();
+
+        // Dispatch timer restart event for Alpine.js when timer is already running
+        if ($this->timeLimitMinutes !== null && $this->fillingStartedAt !== null) {
+            $deadline = CarbonImmutable::parse($this->fillingStartedAt)->addMinutes($this->timeLimitMinutes);
+            $remainingSeconds = max(0, (int) now()->diffInSeconds($deadline, false));
+            $this->dispatch('start-timer', remainingSeconds: $remainingSeconds);
+        }
+    }
+
+    public function backToDepartmentPicker(): void
+    {
+        $this->showDepartmentPicker = true;
+        $this->selectedTargetDepartmentId = null;
+        $this->loadCompletedDepartments();
+
+        $this->questionnaireIds = [];
+        $this->allQuestionnaireIds = [];
+        $this->questionnaireMeta = [];
+        $this->answers = [];
+        $this->currentIndex = 0;
+        $this->confirmSubmitAll = false;
+        $this->dirtyQuestionIds = [];
+        $this->timeExpired = false;
+        $this->lastDraftSavedAt = null;
+    }
+
     private function loadQuestionnaires(): void
     {
         $user = Auth::user();
@@ -322,6 +425,7 @@ class AvailableQuestionnaires extends Component
             $response = Response::query()
                 ->where('questionnaire_id', $questionnaire->id)
                 ->where('user_id', $user->id)
+                ->where('target_department_id', $this->selectedTargetDepartmentId)
                 ->first();
 
             $status = 'not_started';
@@ -434,6 +538,7 @@ class AvailableQuestionnaires extends Component
                 'user_id' => $user->id,
                 'status' => 'draft',
                 'submitted_at' => null,
+                'target_department_id' => $this->selectedTargetDepartmentId,
             ]);
             $responseId = $response->id;
             $this->questionnaireMeta[$questionnaireId]['response_id'] = $responseId;
@@ -464,7 +569,7 @@ class AvailableQuestionnaires extends Component
             $upsertRows[] = [
                 'response_id' => $responseId,
                 'question_id' => (int) $questionId,
-                'department_id' => $user?->department_id,
+                'department_id' => $this->selectedTargetDepartmentId ?? $user?->department_id,
                 'answer_option_id' => $optionId,
                 'essay_answer' => $essayValue,
                 'calculated_score' => null,
@@ -577,10 +682,10 @@ class AvailableQuestionnaires extends Component
         $this->fillingStartedAt = $user->filling_started_at?->toIso8601String();
         $this->showStartConfirmation = false;
 
-        // Dispatch browser event with remaining seconds so Alpine.js timer starts
-        // reliably without depending on DOM hidden-input state after morph.
         $deadline = CarbonImmutable::parse($this->fillingStartedAt)->addMinutes($this->timeLimitMinutes);
         $remainingSeconds = max(0, (int) now()->diffInSeconds($deadline, false));
+
+        // Dispatch Livewire event – will be caught by @script $wire.on() listener
         $this->dispatch('start-timer', remainingSeconds: $remainingSeconds);
     }
 
@@ -621,6 +726,17 @@ class AvailableQuestionnaires extends Component
             $this->validateAllRequired();
         }
 
+        // Validate target department authorization before submission
+        if ($this->selectedTargetDepartmentId !== null) {
+            $user = auth()->user();
+            if ($user && $user->evaluableDepartments()->exists()) {
+                $isAllowed = $user->evaluableDepartments()->whereKey($this->selectedTargetDepartmentId)->exists();
+                if (!$isAllowed) {
+                    abort(403, 'Anda tidak diizinkan mengevaluasi department ini.');
+                }
+            }
+        }
+
         $user = Auth::user();
         $scorer = app(QuestionnaireScorer::class);
         $timestamp = now();
@@ -643,6 +759,7 @@ class AvailableQuestionnaires extends Component
                     'user_id' => $user->id,
                     'status' => 'submitted',
                     'submitted_at' => now(),
+                    'target_department_id' => $this->selectedTargetDepartmentId,
                 ]);
                 $responseId = $response->id;
             } else {
@@ -671,7 +788,7 @@ class AvailableQuestionnaires extends Component
                         [[
                             'response_id' => $responseId,
                             'question_id' => $question->id,
-                            'department_id' => $user?->department_id,
+                            'department_id' => $this->selectedTargetDepartmentId ?? $user?->department_id,
                             'answer_option_id' => $optionId,
                             'essay_answer' => $essayValue,
                             'calculated_score' => $scorer->calculateScoreForAnswer($question, $optionId),
@@ -699,6 +816,11 @@ class AvailableQuestionnaires extends Component
             $this->timeExpired = true;
             $count = count($this->allQuestionnaireIds);
             session()->flash('success', "Semua {$count} kuisioner berhasil dikirim!");
+        }
+
+        if (count($this->evaluableDepartments) > 1) {
+            $this->backToDepartmentPicker();
+            return;
         }
     }
 }

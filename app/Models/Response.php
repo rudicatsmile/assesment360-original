@@ -16,6 +16,7 @@ class Response extends Model
     protected $fillable = [
         'questionnaire_id',
         'user_id',
+        'target_department_id',
         'started_at',
         'submitted_at',
         'status',
@@ -34,6 +35,11 @@ class Response extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function targetDepartment(): BelongsTo
+    {
+        return $this->belongsTo(Departement::class, 'target_department_id');
     }
 
     public function answers(): HasMany
