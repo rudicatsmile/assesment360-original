@@ -186,10 +186,14 @@ class DepartmentAnalyticsTest extends TestCase
         $rows = collect($summary['rows'])->keyBy('role_name');
 
         $this->assertSame('Kesiswaan', $summary['department_name']);
-        $this->assertSame(2, (int) $rows['Pengurus Yayasan']['total_respondents']);
+        // total_respondents = users who actually submitted (numerator)
+        $this->assertSame(1, (int) $rows['Pengurus Yayasan']['total_respondents']);
+        // participation_rate = submitted / total active users in dept: 1/2 = 50%
         $this->assertSame(50.0, (float) $rows['Pengurus Yayasan']['participation_rate']);
         $this->assertSame(4.2, (float) $rows['Pengurus Yayasan']['average_score']);
+        // total_respondents = users who actually submitted
         $this->assertSame(1, (int) $rows['Guru Staf']['total_respondents']);
+        // participation_rate = submitted / total active users in dept: 1/1 = 100%
         $this->assertSame(100.0, (float) $rows['Guru Staf']['participation_rate']);
         $this->assertSame(3.5, (float) $rows['Guru Staf']['average_score']);
     }

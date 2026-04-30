@@ -128,9 +128,10 @@ class DepartmentAnalyticsService
         return Cache::remember($cacheKey, now()->addMinutes(5), function () use ($departmentId, $dateFrom, $dateTo): array {
             $departmentName = (string) (Departement::query()->where('id', $departmentId)->value('name') ?? '');
 
-            $totalByRoleSub = DB::table('users')
+            // Count of users who submitted responses to this department (for "Total Responden" column)
+            $respondentCountSub = DB::table('users')
                 ->join('responses', 'responses.user_id', '=', 'users.id')
-                ->selectRaw('users.role_id, COUNT(DISTINCT users.id) as total_users')
+                ->selectRaw('users.role_id, COUNT(DISTINCT users.id) as total_respondents')
                 ->where(function ($query) use ($departmentId) {
                     $query->where('responses.target_department_id', $departmentId)
                         ->orWhere(function ($q) use ($departmentId) {
@@ -144,22 +145,13 @@ class DepartmentAnalyticsService
                 ->whereNull('users.deleted_at')
                 ->groupBy('users.role_id');
 
-            $activeRespondentsSub = DB::table('responses')
-                ->join('users', 'users.id', '=', 'responses.user_id')
-                ->selectRaw('users.role_id, COUNT(DISTINCT users.id) as active_respondents')
-                ->where(function ($query) use ($departmentId) {
-                    $query->where('responses.target_department_id', $departmentId)
-                        ->orWhere(function ($q) use ($departmentId) {
-                            $q->where('users.department_id', $departmentId)
-                                ->whereNull('responses.target_department_id');
-                        });
-                })
+            // Total active users per role in this department (denominator for participation rate)
+            $totalRoleUsersSub = DB::table('users')
+                ->where('users.department_id', $departmentId)
+                ->where('users.is_active', true)
                 ->whereNotNull('users.role_id')
                 ->whereNull('users.deleted_at')
-                ->where('responses.status', 'submitted')
-                ->whereNull('responses.deleted_at')
-                ->when($dateFrom, fn($query) => $query->whereDate('responses.submitted_at', '>=', $dateFrom))
-                ->when($dateTo, fn($query) => $query->whereDate('responses.submitted_at', '<=', $dateTo))
+                ->selectRaw('users.role_id, COUNT(DISTINCT users.id) as total_role_users')
                 ->groupBy('users.role_id');
 
             // Use answers.department_id (target dept) instead of users.department_id (evaluator's dept)
@@ -181,18 +173,18 @@ class DepartmentAnalyticsService
                 ->groupBy('users.role_id');
 
             $rows = DB::table('roles')
-                ->joinSub($totalByRoleSub, 'tot', fn($join) => $join->on('tot.role_id', '=', 'roles.id'))
-                ->leftJoinSub($activeRespondentsSub, 'resp', fn($join) => $join->on('resp.role_id', '=', 'roles.id'))
+                ->joinSub($totalRoleUsersSub, 'tot', fn($join) => $join->on('tot.role_id', '=', 'roles.id'))
+                ->leftJoinSub($respondentCountSub, 'resp', fn($join) => $join->on('resp.role_id', '=', 'roles.id'))
                 ->leftJoinSub($averageScoreSub, 'score', fn($join) => $join->on('score.role_id', '=', 'roles.id'))
                 ->where('roles.show_in_analytics', true)
                 ->orderBy('roles.name')
                 ->selectRaw('
                     roles.id as role_id,
                     roles.name as role_name,
-                    COALESCE(tot.total_users, 0) as total_respondents,
+                    COALESCE(resp.total_respondents, 0) as total_respondents,
                     CASE
-                        WHEN COALESCE(tot.total_users, 0) = 0 THEN 0
-                        ELSE ROUND((COALESCE(resp.active_respondents, 0) / tot.total_users) * 100, 1)
+                        WHEN COALESCE(tot.total_role_users, 0) = 0 THEN 0
+                        ELSE ROUND((COALESCE(resp.total_respondents, 0) / tot.total_role_users) * 100, 1)
                     END as participation_rate,
                     ROUND(COALESCE(score.average_score, 0), 2) as average_score
                 ')
