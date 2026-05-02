@@ -211,7 +211,8 @@ class DepartmentAnalyticsService
      *   user_id:int,
      *   user_name:string,
      *   total_submissions:int,
-     *   average_score:float
+     *   average_score:float,
+     *   submitted_at:string|null
      * }>
      */
     public function summarizeUsersByDepartmentRole(
@@ -233,7 +234,7 @@ class DepartmentAnalyticsService
             // submissions for other departments are not counted in this department's analytics.
             // orWhereNull handles legacy responses before target_department_id was added.
             $submissionSub = DB::table('responses')
-                ->selectRaw('user_id, COUNT(*) as total_submissions')
+                ->selectRaw('user_id, COUNT(*) as total_submissions, MAX(submitted_at) as submitted_at')
                 ->where('status', 'submitted')
                 ->whereNull('deleted_at')
                 ->where(fn($q) => $q->where('target_department_id', $departmentId)->orWhereNull('target_department_id'))
@@ -291,6 +292,7 @@ class DepartmentAnalyticsService
                     users.name as user_name,
                     COALESCE(sub.total_submissions, 0) as total_submissions,
                     ROUND(COALESCE(sc.average_score, 0), 2) as average_score,
+                    sub.submitted_at as submitted_at,
                     CASE
                         WHEN COALESCE(sub.total_submissions, 0) > 0 THEN \'completed\'
                         WHEN hd.has_draft IS NOT NULL THEN \'in_progress\'
@@ -303,6 +305,7 @@ class DepartmentAnalyticsService
                     'user_name' => (string) $row->user_name,
                     'total_submissions' => (int) $row->total_submissions,
                     'average_score' => (float) $row->average_score,
+                    'submitted_at' => $row->submitted_at ? (string) $row->submitted_at : null,
                     'submission_status' => (string) $row->submission_status,
                 ])
                 ->values()

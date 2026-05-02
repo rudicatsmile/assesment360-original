@@ -223,16 +223,17 @@
                                         <button type="button" class="inline-flex items-center gap-2 text-left hover:underline"
                                             wire:click="toggleRole({{ $roleRow['role_id'] }})">
                                             <span>{{ $roleRow['role_name'] }}</span>
-                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" style="
-                                                                                                                width: 14px;
-                                                                                                                height: 14px;
-                                                                                                                min-width: 14px;
-                                                                                                                display: inline-block;
-                                                                                                                vertical-align: middle;
-                                                                                                                transition: transform 320ms ease;
-                                                                                                                transform-origin: 50% 50%;
-                                                                                                                transform: {{ $expandedRoleId === $roleRow['role_id'] ? 'rotate(180deg)' : 'rotate(0deg)' }};
-                                                                                                            ">
+                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"
+                                                style="
+                                                                                                                                                                                                    width: 14px;
+                                                                                                                                                                                                    height: 14px;
+                                                                                                                                                                                                    min-width: 14px;
+                                                                                                                                                                                                    display: inline-block;
+                                                                                                                                                                                                    vertical-align: middle;
+                                                                                                                                                                                                    transition: transform 320ms ease;
+                                                                                                                                                                                                    transform-origin: 50% 50%;
+                                                                                                                                                                                                    transform: {{ $expandedRoleId === $roleRow['role_id'] ? 'rotate(180deg)' : 'rotate(0deg)' }};
+                                                                                                                                                                                                ">
                                                 <path fill-rule="evenodd"
                                                     d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.168l3.71-3.94a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z"
                                                     clip-rule="evenodd" />
@@ -287,12 +288,19 @@
                                                                             </svg>
                                                                         @endif
                                                                         <span>{{ $userRow['user_name'] }}</span>
+                                                                        {{-- <span class="text-zinc-400">-</span>
+                                                                        <span class="text-zinc-500">{{
+                                                                            number_format($userRow['total_submissions'], 0) }}</span> --}}
                                                                         <span class="text-zinc-400">-</span>
-                                                                        <span class="text-zinc-500">Submit:
-                                                                            {{ number_format($userRow['total_submissions'], 0) }}</span>
-                                                                        <span class="text-zinc-400">-</span>
-                                                                        <span class="text-zinc-500">Avg Score:
+                                                                        <span class="text-zinc-500">Skor penilaian:
                                                                             {{ number_format($userRow['average_score'], 2) }}</span>
+                                                                        @if(!empty($userRow['submitted_at']))
+                                                                            <span
+                                                                                class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                                                                                Waktu :
+                                                                                {{ \Carbon\Carbon::parse($userRow['submitted_at'])->setTimezone('Asia/Jakarta')->format('d-m-Y H:i:s') }}
+                                                                            </span>
+                                                                        @endif
                                                                     </p>
                                                                     @if(auth()->user()?->roleSlug() !== 'admin_viewer')
                                                                         <button type="button"

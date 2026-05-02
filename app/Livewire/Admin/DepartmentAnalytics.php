@@ -39,7 +39,7 @@ class DepartmentAnalytics extends Component
 
     public ?int $expandedRoleId = null;
 
-    /** @var array<int, array<int, array{user_id:int, user_name:string, total_submissions:int, average_score:float}>> */
+    /** @var array<int, array<int, array{user_id:int, user_name:string, total_submissions:int, average_score:float, submitted_at:string|null}>> */
     public array $roleUsersByRole = [];
 
     /** @var array<int, string> */
