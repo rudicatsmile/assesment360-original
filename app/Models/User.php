@@ -98,6 +98,18 @@ class User extends Authenticatable
         return $this->isAdminRole();
     }
 
+    public function hasPermission(string $permission): bool
+    {
+        $slug = $this->roleSlug();
+        $permissions = config("rbac.permissions.{$slug}", []);
+        return in_array($permission, $permissions);
+    }
+
+    public function hasAnyPermission(array $permissions): bool
+    {
+        return collect($permissions)->contains(fn($p) => $this->hasPermission($p));
+    }
+
     public function evaluableDepartments(): BelongsToMany
     {
         return $this->belongsToMany(

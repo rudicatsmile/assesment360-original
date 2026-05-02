@@ -76,9 +76,9 @@ Route::middleware('auth')->group(function (): void {
 Route::middleware(['auth', $adminGateMiddleware])->prefix($adminRoutePrefix)->name($adminRouteName)->group(function () use ($adminRoutePrefix): void {
     Route::redirect('/', '/' . trim($adminRoutePrefix, '/') . '/dashboard');
     Route::get('/dashboard', AdminDashboard::class)->name('dashboard');
-    Route::get('/analytics', DepartmentAnalytics::class)->name('analytics.index');
+    Route::get('/analytics', DepartmentAnalytics::class)->middleware('permission:view_analytics')->name('analytics.index');
 
-    Route::prefix('questionnaires')->name('questionnaires.')->group(function (): void {
+    Route::prefix('questionnaires')->name('questionnaires.')->middleware('permission:manage_questionnaires')->group(function (): void {
         Route::get('/', QuestionnaireList::class)->name('index');
         Route::get('/create', QuestionnaireForm::class)->name('create');
         Route::get('/{questionnaire}', QuestionnaireAnalytics::class)->name('show');
@@ -86,17 +86,17 @@ Route::middleware(['auth', $adminGateMiddleware])->prefix($adminRoutePrefix)->na
         Route::get('/{questionnaire}/questions', QuestionManager::class)->name('questions');
     });
 
-    Route::prefix('exports')->name('exports.')->group(function (): void {
+    Route::prefix('exports')->name('exports.')->middleware('permission:export_data')->group(function (): void {
         Route::get('/questionnaires-all', [QuestionnaireExportController::class, 'all'])->name('all');
         Route::get('/questionnaires/{questionnaire}', [QuestionnaireExportController::class, 'questionnaire'])->name('questionnaire');
         Route::get('/department-analytics/excel', [DepartmentAnalyticsExportController::class, 'excel'])->name('department-analytics.excel');
         Route::get('/department-analytics/pdf', [DepartmentAnalyticsExportController::class, 'pdf'])->name('department-analytics.pdf');
     });
 
-    Route::get('/users', UserDirectory::class)->name('users.index');
-    Route::get('/roles', RoleDirectory::class)->name('roles.index');
-    Route::get('/departments', DepartmentDirectory::class)->name('departments.index');
-    Route::prefix('departments')->name('departments.')->group(function (): void {
+    Route::get('/users', UserDirectory::class)->middleware('permission:manage_users')->name('users.index');
+    Route::get('/roles', RoleDirectory::class)->middleware('permission:manage_roles')->name('roles.index');
+    Route::get('/departments', DepartmentDirectory::class)->middleware('permission:manage_departments')->name('departments.index');
+    Route::prefix('departments')->name('departments.')->middleware('permission:manage_departments')->group(function (): void {
         Route::get('/data', [DepartmentManagementController::class, 'index'])
             ->middleware('throttle:120,1')
             ->name('data');
@@ -114,7 +114,7 @@ Route::middleware(['auth', $adminGateMiddleware])->prefix($adminRoutePrefix)->na
             ->name('destroy');
     });
 
-    Route::prefix('users')->name('users.')->group(function (): void {
+    Route::prefix('users')->name('users.')->middleware('permission:manage_users')->group(function (): void {
         Route::get('/data', [UserManagementController::class, 'index'])
             ->middleware('throttle:120,1')
             ->name('data');
@@ -132,7 +132,7 @@ Route::middleware(['auth', $adminGateMiddleware])->prefix($adminRoutePrefix)->na
             ->name('destroy');
     });
 
-    Route::prefix('roles')->name('roles.')->group(function (): void {
+    Route::prefix('roles')->name('roles.')->middleware('permission:manage_roles')->group(function (): void {
         Route::get('/data', [RoleController::class, 'index'])
             ->middleware('throttle:120,1')
             ->name('data');

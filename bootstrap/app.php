@@ -19,12 +19,14 @@ return Application::configure(basePath: dirname(__DIR__))
         $evaluatorAlias = (string) ($middlewareAliases['evaluator_gate'] ?? 'access.evaluator');
         $roleAlias = (string) ($middlewareAliases['role_gate'] ?? 'access.role');
         $roleRedirectAlias = (string) ($middlewareAliases['role_redirect'] ?? 'access.role.redirect');
+        $permissionAlias = (string) ($middlewareAliases['permission'] ?? 'permission');
 
         $middleware->alias([
             $adminAlias => \App\Http\Middleware\EnsureUserIsAdmin::class,
             $evaluatorAlias => \App\Http\Middleware\EnsureUserIsEvaluator::class,
             $roleAlias => \App\Http\Middleware\EnsureUserHasRole::class,
             $roleRedirectAlias => \App\Http\Middleware\RedirectByRole::class,
+            $permissionAlias => \App\Http\Middleware\EnsureUserHasPermission::class,
         ]);
 
         $middleware->validateCsrfTokens(except: [

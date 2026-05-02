@@ -171,12 +171,22 @@ class DepartmentAnalytics extends Component
         }
 
         try {
-            $this->roleUsersByRole[$roleId] = app(DepartmentAnalyticsService::class)->summarizeUsersByDepartmentRole(
+            $users = app(DepartmentAnalyticsService::class)->summarizeUsersByDepartmentRole(
                 $this->selectedDepartmentId,
                 $roleId,
                 $this->dateFrom,
                 $this->dateTo
             );
+
+            // Hide user names for admin_viewer role
+            if (auth()->user()?->roleSlug() === 'admin_viewer') {
+                $users = array_map(function ($u, $index) {
+                    $u['user_name'] = 'Responden ' . ($index + 1);
+                    return $u;
+                }, $users, array_keys($users));
+            }
+
+            $this->roleUsersByRole[$roleId] = $users;
             unset($this->roleUsersErrorByRole[$roleId]);
         } catch (\Throwable $exception) {
             report($exception);

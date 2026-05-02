@@ -1,7 +1,12 @@
 <?php
 
 return [
-    'admin_slugs' => ['super_admin', 'admin'],
+    'admin_slugs' => ['super_admin', 'admin', 'admin_viewer'],
+    'permissions' => [
+        'super_admin' => ['view_dashboard', 'view_analytics', 'manage_questionnaires', 'manage_users', 'manage_departments', 'manage_roles', 'export_data'],
+        'admin' => ['view_dashboard', 'view_analytics', 'manage_questionnaires', 'manage_users', 'manage_departments', 'manage_roles', 'export_data'],
+        'admin_viewer' => ['view_dashboard', 'view_analytics'],
+    ],
     'evaluator_slugs' => ['guru', 'tata_usaha', 'orang_tua', 'user'],
     'questionnaire_target_slugs' => ['guru', 'tata_usaha', 'orang_tua'],
     'questionnaire_target_aliases' => [
@@ -33,6 +38,7 @@ return [
         'evaluator_gate' => 'access.evaluator',
         'role_gate' => 'access.role',
         'role_redirect' => 'access.role.redirect',
+        'permission' => 'permission',
     ],
     'admin_route' => [
         'prefix' => 'admin',
@@ -41,6 +47,7 @@ return [
     'role_definitions' => [
         ['name' => 'Super Admin', 'slug' => 'super_admin', 'description' => 'Akses penuh seluruh modul', 'prosentase' => 100, 'is_active' => true],
         ['name' => 'Admin', 'slug' => 'admin', 'description' => 'Akses manajemen aplikasi', 'prosentase' => 90, 'is_active' => true],
+        ['name' => 'Admin Viewer', 'slug' => 'admin_viewer', 'description' => 'View-only admin', 'prosentase' => 95, 'is_active' => true],
         ['name' => 'Guru', 'slug' => 'guru', 'description' => 'Evaluator guru', 'prosentase' => 70, 'is_active' => true],
         ['name' => 'Tata Usaha', 'slug' => 'tata_usaha', 'description' => 'Evaluator staf TU', 'prosentase' => 60, 'is_active' => true],
         ['name' => 'Orang Tua', 'slug' => 'orang_tua', 'description' => 'Evaluator orang tua', 'prosentase' => 50, 'is_active' => true],
@@ -49,6 +56,7 @@ return [
     'dashboard_paths' => [
         'super_admin' => '/admin/dashboard',
         'admin' => '/admin/dashboard',
+        'admin_viewer' => '/admin/dashboard',
         'guru' => '/fill/dashboard/guru',
         'tata_usaha' => '/fill/dashboard/staff',
         'orang_tua' => '/fill/dashboard/parent',

@@ -5,12 +5,16 @@
             <p class="text-sm text-zinc-500">Ringkasan partisipasi dan skor kuisioner secara keseluruhan.</p>
         </div>
         <div class="flex items-center gap-2">
-            <a href="{{ route('admin.exports.all') }}">
-                <flux:button variant="filled" icon="arrow-down-tray">Export Semua (Excel)</flux:button>
-            </a>
-            <a href="{{ route('admin.questionnaires.index') }}" wire:navigate>
-                <flux:button variant="outline" icon="clipboard-document-list">Lihat Daftar Kuisioner</flux:button>
-            </a>
+            @if(auth()->user()?->hasPermission('export_data'))
+                <a href="{{ route('admin.exports.all') }}">
+                    <flux:button variant="filled" icon="arrow-down-tray">Export Semua (Excel)</flux:button>
+                </a>
+            @endif
+            @if(auth()->user()?->hasPermission('manage_questionnaires'))
+                <a href="{{ route('admin.questionnaires.index') }}" wire:navigate>
+                    <flux:button variant="outline" icon="clipboard-document-list">Lihat Daftar Kuisioner</flux:button>
+                </a>
+            @endif
         </div>
     </div>
 
@@ -27,7 +31,8 @@
 
         <article class="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
             <p class="text-xs uppercase tracking-wide text-zinc-500">Tingkat Partisipasi</p>
-            <p class="mt-2 text-3xl font-semibold text-zinc-900">{{ number_format($metrics['participation_rate'], 2) }}%</p>
+            <p class="mt-2 text-3xl font-semibold text-zinc-900">{{ number_format($metrics['participation_rate'], 2) }}%
+            </p>
         </article>
 
         <article class="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">

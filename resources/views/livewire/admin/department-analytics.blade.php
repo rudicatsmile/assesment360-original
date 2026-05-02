@@ -8,12 +8,14 @@
             <flux:button variant="ghost" icon="chart-bar" wire:click="toggleCharts">
                 {{ $showCharts ? 'Sembunyikan Chart' : 'Tampilkan Chart' }}
             </flux:button>
-            <a href="{{ $this->exportExcelUrl() }}">
-                <flux:button variant="filled" icon="arrow-down-tray">Export Excel</flux:button>
-            </a>
-            <a href="{{ $this->exportPdfUrl() }}" target="_blank">
-                <flux:button variant="outline" icon="document">Export PDF</flux:button>
-            </a>
+            @if(auth()->user()?->hasPermission('export_data'))
+                <a href="{{ $this->exportExcelUrl() }}">
+                    <flux:button variant="filled" icon="arrow-down-tray">Export Excel</flux:button>
+                </a>
+                <a href="{{ $this->exportPdfUrl() }}" target="_blank">
+                    <flux:button variant="outline" icon="document">Export PDF</flux:button>
+                </a>
+            @endif
         </div>
     </div>
 
@@ -222,15 +224,15 @@
                                             wire:click="toggleRole({{ $roleRow['role_id'] }})">
                                             <span>{{ $roleRow['role_name'] }}</span>
                                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" style="
-                                                                                        width: 14px;
-                                                                                        height: 14px;
-                                                                                        min-width: 14px;
-                                                                                        display: inline-block;
-                                                                                        vertical-align: middle;
-                                                                                        transition: transform 320ms ease;
-                                                                                        transform-origin: 50% 50%;
-                                                                                        transform: {{ $expandedRoleId === $roleRow['role_id'] ? 'rotate(180deg)' : 'rotate(0deg)' }};
-                                                                                    ">
+                                                                                                                width: 14px;
+                                                                                                                height: 14px;
+                                                                                                                min-width: 14px;
+                                                                                                                display: inline-block;
+                                                                                                                vertical-align: middle;
+                                                                                                                transition: transform 320ms ease;
+                                                                                                                transform-origin: 50% 50%;
+                                                                                                                transform: {{ $expandedRoleId === $roleRow['role_id'] ? 'rotate(180deg)' : 'rotate(0deg)' }};
+                                                                                                            ">
                                                 <path fill-rule="evenodd"
                                                     d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.168l3.71-3.94a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z"
                                                     clip-rule="evenodd" />
@@ -292,20 +294,22 @@
                                                                         <span class="text-zinc-500">Avg Score:
                                                                             {{ number_format($userRow['average_score'], 2) }}</span>
                                                                     </p>
-                                                                    <button type="button"
-                                                                        wire:click="showUserDetail({{ $userRow['user_id'] }}, '{{ addslashes($userRow['user_name']) }}')"
-                                                                        class="ml-2 inline-flex items-center gap-1 rounded-lg bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-100"
-                                                                        title="Lihat Detail Jawaban">
-                                                                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor"
-                                                                            viewBox="0 0 24 24">
-                                                                            <path stroke-linecap="round" stroke-linejoin="round"
-                                                                                stroke-width="2"
-                                                                                d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
-                                                                            <path stroke-linecap="round" stroke-linejoin="round"
-                                                                                stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                                                        </svg>
-                                                                        Detail
-                                                                    </button>
+                                                                    @if(auth()->user()?->roleSlug() !== 'admin_viewer')
+                                                                        <button type="button"
+                                                                            wire:click="showUserDetail({{ $userRow['user_id'] }}, '{{ addslashes($userRow['user_name']) }}')"
+                                                                            class="ml-2 inline-flex items-center gap-1 rounded-lg bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-100"
+                                                                            title="Lihat Detail Jawaban">
+                                                                            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor"
+                                                                                viewBox="0 0 24 24">
+                                                                                <path stroke-linecap="round" stroke-linejoin="round"
+                                                                                    stroke-width="2"
+                                                                                    d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                                                                                <path stroke-linecap="round" stroke-linejoin="round"
+                                                                                    stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                                            </svg>
+                                                                            Detail
+                                                                        </button>
+                                                                    @endif
                                                                 </div>
                                                             @endforeach
                                                         </div>
