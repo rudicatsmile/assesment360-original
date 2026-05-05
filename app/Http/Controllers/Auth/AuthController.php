@@ -19,13 +19,15 @@ class AuthController extends Controller
     public function showLogin(): View
     {
         $mode = $this->resolveLoginMode();
+        $isBypass = $this->isOtpBypassEnabled() && in_array($mode, ['bypass', 'whatsapp', 'both'], true);
 
         return view('auth.login', [
             'verificationPending' => (bool) session('phone_login_verification_id'),
             'maskedPhone' => session('phone_login_masked'),
             'loginMode' => $mode,
-            'passwordLoginEnabled' => in_array($mode, ['password', 'both'], true),
-            'whatsAppLoginEnabled' => in_array($mode, ['whatsapp', 'both'], true),
+            'passwordLoginEnabled' => in_array($mode, ['password', 'both'], true) && ! $isBypass,
+            'whatsAppLoginEnabled' => in_array($mode, ['whatsapp', 'both'], true) && ! $isBypass,
+            'bypassLoginEnabled' => $isBypass,
         ]);
     }
 
@@ -37,6 +39,7 @@ class AuthController extends Controller
             'loginMode' => 'password',
             'passwordLoginEnabled' => true,
             'whatsAppLoginEnabled' => false,
+            'bypassLoginEnabled' => false,
         ]);
     }
 
@@ -279,6 +282,60 @@ class AuthController extends Controller
     {
         $mode = strtolower((string) config('features.login_mode', 'both'));
 
-        return in_array($mode, ['password', 'whatsapp', 'both'], true) ? $mode : 'both';
+        return in_array($mode, ['password', 'whatsapp', 'both', 'bypass'], true) ? $mode : 'both';
+    }
+
+    /**
+     * Check if OTP bypass is enabled
+     */
+    private function isOtpBypassEnabled(): bool
+    {
+        return (bool) config('features.otp_bypass', false);
+    }
+
+    /**
+     * Handle phone login with OTP bypass (direct verification)
+     * When bypass is enabled, user enters phone number and is directly logged in
+     * without needing to enter OTP code
+     */
+    public function loginWithPhoneBypass(Request $request): RedirectResponse
+    {
+        if (! $this->isOtpBypassEnabled()) {
+            return back()->with('error', 'Mode bypass OTP tidak aktif.');
+        }
+
+        if (! in_array($this->resolveLoginMode(), ['bypass', 'whatsapp', 'both'], true)) {
+            return back()->with('error', 'Mode login verifikasi WhatsApp saat ini dinonaktifkan.');
+        }
+
+        $validated = $request->validate([
+            'phone_number' => ['required', 'regex:/^0[0-9]{6,14}$/'],
+        ], [
+            'phone_number.regex' => 'Format nomor telepon tidak valid. Gunakan format 08xxxxxxxxxx.',
+        ]);
+
+        $countryCode = '+62';
+        $phoneE164 = $this->normalizePhone($countryCode, $validated['phone_number']);
+        $user = $this->findUserByPhone($phoneE164, $countryCode, $validated['phone_number']);
+
+        if (!$user || !$user->is_active) {
+            Log::warning('auth.phone_bypass.invalid_number', ['phone' => $phoneE164]);
+
+            return back()
+                ->withInput($request->only('phone_number'))
+                ->with('error', 'Nomor telepon tidak ditemukan atau tidak aktif.');
+        }
+
+        // Log successful bypass login
+        Log::info('auth.phone_bypass.success', [
+            'user_id' => $user->id,
+            'phone' => $phoneE164,
+        ]);
+
+        // Direct login without OTP
+        Auth::login($user, true);
+        $request->session()->regenerate();
+
+        return redirect()->intended(route('role.dashboard'));
     }
 }

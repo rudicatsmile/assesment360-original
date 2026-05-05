@@ -21,6 +21,8 @@
                         Anda dapat login dengan email/password atau verifikasi WhatsApp.
                     @elseif ($loginMode === 'password')
                         Silahkan login menggunakan email dan password.
+                    @elseif ($bypassLoginEnabled)
+                        Masukkan nomor telepon Anda untuk langsung masuk tanpa OTP.
                     @else
                         Silahkan login menggunakan nomor telepon dan verifikasi kode OTP via WhatsApp.
                     @endif
@@ -43,7 +45,7 @@
                     @elseif ($loginMode === 'password')
                         Gunakan email dan password Anda.
                     @else
-                        Masukkan nomor telepon aktif untuk menerima kode verifikasi.
+                        {{-- Masukkan nomor telepon aktif untuk menerima kode verifikasi. --}}
                     @endif
                 </p>
 
@@ -100,7 +102,25 @@
                     </div>
                 @endif
 
-                @if ($whatsAppLoginEnabled)
+                @if ($bypassLoginEnabled)
+                    <form method="POST" action="{{ route('login.phone_bypass') }}" class="space-y-4">
+                        @csrf
+
+                        <label class="block space-y-1 text-sm">
+                            <span class="font-medium text-zinc-700">Nomor Telepon</span>
+                            <input type="text" name="phone_number"
+                                value="{{ old('phone_number', session('phone_login_number')) }}" required autofocus
+                                class="w-full rounded-lg border border-zinc-300 px-3 py-2 focus:border-zinc-500 focus:outline-none"
+                                placeholder="081234567890">
+                            @error('phone_number') <span class="text-xs text-rose-600">{{ $message }}</span> @enderror
+                        </label>
+
+                        <button type="submit"
+                            class="w-full rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700">
+                            Masuk dengan Nomor Telepon
+                        </button>
+                    </form>
+                @elseif ($whatsAppLoginEnabled)
                     <form method="POST" action="{{ route('login.send_verification') }}" class="space-y-4">
                         @csrf
 

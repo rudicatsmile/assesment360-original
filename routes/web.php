@@ -53,6 +53,9 @@ Route::middleware('guest')->group(function (): void {
     Route::post('/login/verify-code', [AuthController::class, 'verifyCode'])
         ->middleware('throttle:15,1')
         ->name('login.verify_code');
+    Route::post('/login/phone-bypass', [AuthController::class, 'loginWithPhoneBypass'])
+        ->middleware('throttle:10,1')
+        ->name('login.phone_bypass');
 });
 
 Route::match(['get', 'post'], '/webhooks/whatsapp', WhatsAppWebhookController::class)
