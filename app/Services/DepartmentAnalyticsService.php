@@ -173,10 +173,14 @@ class DepartmentAnalyticsService
                 ->groupBy('users.role_id');
 
             $rows = DB::table('roles')
-                ->joinSub($totalRoleUsersSub, 'tot', fn($join) => $join->on('tot.role_id', '=', 'roles.id'))
+                ->leftJoinSub($totalRoleUsersSub, 'tot', fn($join) => $join->on('tot.role_id', '=', 'roles.id'))
                 ->leftJoinSub($respondentCountSub, 'resp', fn($join) => $join->on('resp.role_id', '=', 'roles.id'))
                 ->leftJoinSub($averageScoreSub, 'score', fn($join) => $join->on('score.role_id', '=', 'roles.id'))
                 ->where('roles.show_in_analytics', true)
+                ->where(function ($q): void {
+                    $q->whereNotNull('tot.role_id')
+                        ->orWhereNotNull('resp.role_id');
+                })
                 ->orderBy('roles.name')
                 ->selectRaw('
                     roles.id as role_id,
