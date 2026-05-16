@@ -140,15 +140,28 @@
                         <div class="space-y-1.5 md:col-span-2">
                             <flux:heading size="sm" class="mb-2">Department yang Bisa Dievaluasi</flux:heading>
                             <flux:text size="sm" class="mb-2 text-zinc-500">Pilih department yang bisa dievaluasi oleh user
-                                ini. Jika tidak ada yang dipilih, user mengikuti flow normal.</flux:text>
-                            <div class="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto border rounded-lg p-3">
+                                ini. Jika tidak ada yang dipilih, user mengikuti flow normal.
+                                @if($editingUserId)
+                                    Tombol <span class="font-medium text-amber-600">Reset Sesi</span> di samping nama departemen akan mereset jawaban dan timer hanya untuk departemen tersebut.
+                                @endif
+                            </flux:text>
+                            <div class="flex flex-col gap-1 max-h-48 overflow-y-auto border rounded-lg p-3">
                                 @foreach($departments as $dept)
-                                    <label
-                                        class="flex items-center gap-2 text-sm cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-700 rounded px-2 py-1">
-                                        <input type="checkbox" wire:model="selectedEvaluableDepartments" value="{{ $dept->id }}"
-                                            class="rounded border-zinc-300 text-blue-600 focus:ring-blue-500">
-                                        <span>{{ $dept->name }}</span>
-                                    </label>
+                                    <div class="flex items-center justify-between gap-2 rounded px-2 py-1 hover:bg-zinc-50">
+                                        <label class="flex flex-1 items-center gap-2 text-sm cursor-pointer">
+                                            <input type="checkbox" wire:model="selectedEvaluableDepartments" value="{{ $dept->id }}"
+                                                class="rounded border-zinc-300 text-blue-600 focus:ring-blue-500">
+                                            <span>{{ $dept->name }}</span>
+                                        </label>
+                                        @if($editingUserId && in_array((string) $dept->id, $selectedEvaluableDepartments) && in_array((int) $dept->id, $editingUserSubmittedDepartmentIds))
+                                            <button type="button"
+                                                wire:click="resetUserSessionByDepartment({{ $editingUserId }}, {{ $dept->id }})"
+                                                wire:confirm="Reset sesi untuk departemen {{ $dept->name }}? Timer departemen ini akan direset dan jawaban yang sudah dikirim untuk departemen ini akan dikembalikan ke draft."
+                                                class="shrink-0 text-xs text-amber-600 hover:text-amber-800 hover:underline">
+                                                Reset Sesi
+                                            </button>
+                                        @endif
+                                    </div>
                                 @endforeach
                             </div>
                         </div>
@@ -331,7 +344,7 @@
                                 <div class="flex justify-end gap-2">
                                     @if($user->filling_started_at || $user->responses()->where('status', 'submitted')->exists())
                                         <flux:button size="xs" variant="outline" wire:click="resetUserSession({{ $user->id }})"
-                                            wire:confirm="Reset sesi pengisian {{ $user->name }}? Timer akan direset dan semua jawaban yang sudah dikirim akan dikembalikan ke draft."
+                                            wire:confirm="Reset sesi pengisian {{ $user->name }}? Timer akan direset dan SEMUA jawaban yang sudah dikirim (seluruh departemen) akan dikembalikan ke draft. Untuk reset per-departemen, gunakan tombol Reset Sesi di popup Edit Pengguna."
                                             class="text-amber-700 ring-amber-300 hover:bg-amber-50">
                                             Reset Sesi
                                         </flux:button>

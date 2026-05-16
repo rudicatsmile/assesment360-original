@@ -7,6 +7,7 @@ use App\Models\Response;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
@@ -53,6 +54,9 @@ class UserDirectory extends Component
     public bool $is_active = true;
 
     public array $selectedEvaluableDepartments = [];
+
+    /** @var array<int, int> Department IDs that the editing user has fully submitted responses for */
+    public array $editingUserSubmittedDepartmentIds = [];
 
     /** @var int|null Hours component of time limit */
     public ?int $time_limit_hours = null;
@@ -136,6 +140,16 @@ class UserDirectory extends Component
         }
 
         $this->selectedEvaluableDepartments = $user->evaluableDepartments()->pluck('departements.id')->map(fn($id) => (string) $id)->toArray();
+
+        $this->editingUserSubmittedDepartmentIds = Response::query()
+            ->where('user_id', $userId)
+            ->where('status', 'submitted')
+            ->whereNotNull('target_department_id')
+            ->whereNull('deleted_at')
+            ->distinct()
+            ->pluck('target_department_id')
+            ->map(fn($id) => (int) $id)
+            ->toArray();
 
         $this->showForm = true;
         $this->resetErrorBag();
@@ -288,15 +302,20 @@ class UserDirectory extends Component
 
     /**
      * Reset a user's fill session so they can re-do questionnaires.
-     * Sets filling_started_at to null and reverts all submitted responses to draft.
+     * Clears the global timer, all per-department timers, and reverts all submitted responses to draft.
      */
     public function resetUserSession(int $userId): void
     {
         $user = User::query()->findOrFail($userId);
 
-        // Reset the fill session timer
+        // Reset the global fill session timer
         $user->filling_started_at = null;
         $user->save();
+
+        // Reset per-department fill session timers (multi-dept users)
+        DB::table('user_evaluable_departments')
+            ->where('user_id', $userId)
+            ->update(['filling_started_at' => null]);
 
         // Revert all submitted responses back to draft so questionnaires become fillable again
         $revertedCount = Response::query()
@@ -314,6 +333,46 @@ class UserDirectory extends Component
         ]);
 
         session()->flash('success', "Sesi pengisian {$user->name} berhasil direset. {$revertedCount} response dikembalikan ke draft.");
+    }
+
+    /**
+     * Reset a user's fill session for a specific department only.
+     * Clears the per-department pivot timer and reverts submitted responses for that department to draft.
+     */
+    public function resetUserSessionByDepartment(int $userId, int $departmentId): void
+    {
+        $user = User::query()->findOrFail($userId);
+        $dept = Departement::query()->findOrFail($departmentId);
+
+        // Reset the per-department fill session timer on the pivot table
+        DB::table('user_evaluable_departments')
+            ->where('user_id', $userId)
+            ->where('department_id', $departmentId)
+            ->update(['filling_started_at' => null]);
+
+        // Revert submitted responses scoped to this specific department back to draft
+        $revertedCount = Response::query()
+            ->where('user_id', $userId)
+            ->where('target_department_id', $departmentId)
+            ->where('status', 'submitted')
+            ->update([
+                'status' => 'draft',
+                'submitted_at' => null,
+            ]);
+
+        // Remove from the reactive array so the button disappears immediately in the open modal
+        $this->editingUserSubmittedDepartmentIds = array_values(
+            array_filter($this->editingUserSubmittedDepartmentIds, fn(int $id) => $id !== $departmentId)
+        );
+
+        Log::info('admin.users.reset-session-by-department', [
+            'actor_id' => auth()->id(),
+            'target_user_id' => $userId,
+            'department_id' => $departmentId,
+            'responses_reverted' => $revertedCount,
+        ]);
+
+        session()->flash('success', "Sesi pengisian {$user->name} untuk departemen {$dept->name} berhasil direset. {$revertedCount} response dikembalikan ke draft.");
     }
 
     /**
@@ -367,6 +426,7 @@ class UserDirectory extends Component
         $this->time_limit_hours = null;
         $this->time_limit_minutes = null;
         $this->selectedEvaluableDepartments = [];
+        $this->editingUserSubmittedDepartmentIds = [];
         $this->resetErrorBag();
     }
 
